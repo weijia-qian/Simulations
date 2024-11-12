@@ -1,0 +1,26 @@
+## RStudio files
+.Rproj.user
+
+## History
+.Rhistory
+
+
+data
+output
+
+output/*RDA
+output/*Rdata
+
+
+analysis/*_cache/
+drafts/*_cache/
+.Ruserdata
+
+*DS_Store
+*err
+*out
+
+*talk_figures*
+*html
+
+sandbox/
