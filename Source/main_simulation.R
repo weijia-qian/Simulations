@@ -6,33 +6,13 @@
 # and fits functional AFT and Cox models
 ####################################################################
 
-# 1: install.packages("RCurl", repos = "http://cran.us.r-project.org")
-#   installation of package ‘RCurl’ had non-zero exit status
-# 2: In install.packages("refund", dependencies = TRUE) :
-#   installation of package ‘lme4’ had non-zero exit status
-# 3: In install.packages("refund", dependencies = TRUE) :
-#   installation of package ‘fds’ had non-zero exit status
-# 4: In install.packages("refund", dependencies = TRUE) :
-#   installation of package ‘gamm4’ had non-zero exit status
-# 5: In install.packages("refund", dependencies = TRUE) :
-#   installation of package ‘RLRsim’ had non-zero exit status
-# 6: In install.packages("refund", dependencies = TRUE) :
-#   installation of package ‘fda’ had non-zero exit status
-# 7: In install.packages("refund", dependencies = TRUE) :
-#   installation of package ‘refund’ had non-zero exit status
-# install.packages('here', repos = "http://cran.us.r-project.org")
-# install.packages('MASS', repos = "http://cran.us.r-project.org")
-# install.packages('mgcv', repos = "http://cran.us.r-project.org")
-# install.packages('refund', repos = "http://cran.us.r-project.org")
-# install.packages('scam', repos = "http://cran.us.r-project.org")
-# install.packages('tidyverse', repos = "http://cran.us.r-project.org")
-
 suppressPackageStartupMessages(library(here))
 suppressPackageStartupMessages(library(MASS))
 suppressPackageStartupMessages(library(mgcv))
 suppressPackageStartupMessages(library(refund))
 suppressPackageStartupMessages(library(scam))
 suppressPackageStartupMessages(library(splines))
+suppressPackageStartupMessages(library(tictoc))
 suppressPackageStartupMessages(library(tidyverse))
 
 wd = getwd()
@@ -69,9 +49,9 @@ params = expand.grid(seed_start = seed_start,
 Date = gsub("-", "", Sys.Date())
 dir.create(file.path(here::here("Output"), Date), showWarnings = FALSE)
 
-## define number of simulations and parameter scenario
+## define number of simulations and parameter scenarioå
 if(doLocal) {
-  scenario = 6
+  scenario = 1
   N_iter = 50
 }else{
   # defined from batch script params
@@ -111,13 +91,15 @@ for(iter in 1:N_iter){
   ###############################################################
   
   ### linear functional log-normal AFT model
-  fit.norm <- gam(logY ~ 1 + s(S, by = X_L, bs = "ps", k = 20), family = cnorm(), data = sim_data$data)
+  time.norm <- as.numeric(system.time(fit.norm <- gam(logY ~ 1 + s(S, by = X_L, bs = "ps", k = 20), 
+                                                      family = cnorm(), data = sim_data$data))[3])
   ### linear functional Cox model
-  fit.cox <- gam(Y ~ s(S, by = X_L, bs = "ps", k = 20), data = sim_data$data, weights = delta, family = cox.ph)
+  time.cox <- as.numeric(system.time(fit.cox <- gam(Y ~ s(S, by = X_L, bs = "ps", k = 20), data = sim_data$data, 
+                                                        weights = delta, family = cox.ph))[3])
   
   ### calculate pointwise squared error and MISE of estimated beta(s)
   svec <- seq(0, 1, len = nS)
-  df_pred <- data.frame(S = svec, X_L = 1) 
+  df_pred <- data.frame(S = svec, X_L = 1)
   coef.true <- sim_data$coefficients$beta1
   coef.est.norm <- predict(fit.norm, newdata = df_pred, type = "terms", se.fit = TRUE)
   coef.est.cox <- predict(fit.cox, newdata = df_pred, type = "terms", se.fit = TRUE)
@@ -174,7 +156,7 @@ for(iter in 1:N_iter){
     p.true <- matrix(nrow = n, ncol = length(tvec))
     for (i in 1:n) {
       for (j in 1:length(tvec)) {
-        p.true[i,j] <- get_cdf_AFT(time = tvec[j], lp = sim_data$data$lp[i], scale = sim_data$coefficients$b[i], family = family)
+        p.true[i,j] <- get_cdf_AFT(time = tvec[j], lp = sim_data$data$lp[i], scale = sim_data$coefficients$b[1], family = family)
       }
     }
   } else {
@@ -213,7 +195,9 @@ for(iter in 1:N_iter){
                         seed = seed.iter,
                         n = n,
                         family = family,
-                        nS = nS)
+                        nS = nS,
+                        time_norm = time.norm,
+                        time_cox = time.cox)
   
   res <- list(info = df_info, coef = df_coef, surv = df_surv)
 
