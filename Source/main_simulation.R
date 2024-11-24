@@ -12,7 +12,6 @@ suppressPackageStartupMessages(library(mgcv))
 suppressPackageStartupMessages(library(refund))
 suppressPackageStartupMessages(library(scam))
 suppressPackageStartupMessages(library(splines))
-suppressPackageStartupMessages(library(tictoc))
 suppressPackageStartupMessages(library(tidyverse))
 
 wd = getwd()
