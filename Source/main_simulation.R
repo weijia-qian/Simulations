@@ -25,9 +25,9 @@ if(substring(wd, 2, 6) == "Users"){
 ###############################################################
 ## define or source functions used in code below
 ###############################################################
-source(here::here("source", "simulate_AFT.R"))
-source(here::here("source", "simulate_Cox.R"))
-source(here::here("source", "utils_summary.R"))
+source(here::here("Source", "simulate_AFT.R"))
+source(here::here("Source", "simulate_Cox.R"))
+source(here::here("Source", "utils_summary.R"))
 
 ###############################################################
 ## set simulation design elements
