@@ -65,7 +65,7 @@ if(doLocal) {
 ## set simulation design elements
 ###############################################################
 # load real data
-load(here::here("source", "dat_func.Rdata"))
+load(here::here("Source", "dat_func.Rdata"))
 
 n = params$n[scenario]
 family = params$family[scenario]
