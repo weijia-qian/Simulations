@@ -13,7 +13,7 @@ simulate_Cox = function(data = dat_func,
   df_wide <- pivot_wider(subset(data, select = -seconds), names_from = frame, values_from = percent_change, 
                          names_prefix = "percent_change_")
   s <- unique(data$seconds)   # original grid
-  svec <- seq(0, tmax, length.out = nS)  # simulation grid
+  ss <- seq(0, tmax, length.out = nS)  # simulation grid
   if (nS <= length(s)) {
     # downsampling the original functional domain
     matrix_wide <- as.matrix(df_wide[, -(1:8)])[, seq(1, length(s), length.out = nS)] 
@@ -24,7 +24,7 @@ simulate_Cox = function(data = dat_func,
     })
     matrix_wide <- t(matrix_wide)
   }
-  fpca.results <- fpca.face(matrix_wide, argvals = svec, pve = 0.99)
+  fpca.results <- fpca.face(matrix_wide, argvals = ss, pve = 0.99)
   
   # re-scaled to appear on the scale of the original functions 
   Phi <- sqrt(nS) * fpca.results$efunctions
@@ -46,7 +46,7 @@ simulate_Cox = function(data = dat_func,
   # matrix containing quadrature weights for all participants
   L <- kronecker(matrix(1, nrow(df_wide), 1), t(lvec))
   # matrix containing functional domain values
-  S <- kronecker(matrix(1, nrow(df_wide), 1), t(svec))
+  S <- kronecker(matrix(1, nrow(df_wide), 1), t(ss))
   df_wide$S <- I(S)
   # pointwise product of w_i(s) and the quadrature weights, "L"
   df_wide$X_L <- I(df_wide$X * L)
@@ -68,7 +68,7 @@ simulate_Cox = function(data = dat_func,
   ### 4. Estimate the linear predictor 
   df_sim <- data.frame(X = I(sim_curves), 
                        L = I(matrix(1 / nS, ncol = nS, nrow = n)), 
-                       S = I(matrix(svec, ncol = nS, nrow = n, byrow = TRUE)))
+                       S = I(matrix(ss, ncol = nS, nrow = n, byrow = TRUE)))
   df_sim$X_L = I(df_sim$X * df_sim$L)
   eta_i <- predict(fit, newdata = df_sim, type = "terms")
 
@@ -104,12 +104,13 @@ simulate_Cox = function(data = dat_func,
                        X_L = I(df_sim$X_L),
                        S = I(df_sim$S),
                        lp = eta_i,
-                       logY = I(logY))
+                       logY = I(logY),
+                       Si = I(Si))
   
   # save true coefficient functions
-  df_coef = data.frame(time = svec,
-                       beta1 = as.numeric(predict(fit, newdata = data.frame(S = svec, X_L = 1), type = "terms")),
-                       Si = I(Si))
+  df_coef = data.frame(time = ss,
+                       beta1 = as.numeric(predict(fit, newdata = data.frame(S = ss, X_L = 1), type = "terms"))
+                       )
   
   return(list(data = sim_data_wide, coefficients = df_coef, family = "cox.ph"))
 

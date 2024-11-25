@@ -6,6 +6,7 @@
 # and fits functional AFT and Cox models
 ####################################################################
 
+suppressPackageStartupMessages(library(fda))
 suppressPackageStartupMessages(library(here))
 suppressPackageStartupMessages(library(MASS))
 suppressPackageStartupMessages(library(mgcv))
@@ -27,6 +28,7 @@ if(substring(wd, 2, 6) == "Users"){
 ###############################################################
 source(here::here("Source", "simulate_AFT.R"))
 source(here::here("Source", "simulate_Cox.R"))
+source(here::here("Source", "est_sieve.R"))
 source(here::here("Source", "utils_summary.R"))
 
 ###############################################################
@@ -50,8 +52,8 @@ dir.create(file.path(here::here("Output"), Date), showWarnings = FALSE)
 
 ## define number of simulations and parameter scenarioå
 if(doLocal) {
-  scenario = 5
-  N_iter = 50
+  scenario = 7
+  N_iter = 2
 }else{
   # defined from batch script params
   scenario <- as.numeric(commandArgs(trailingOnly=TRUE))
@@ -116,6 +118,9 @@ for(iter in 1:N_iter){
   cma.coef.norm <- get_CMA(fit.norm)
   cma.coef.cox <- get_CMA(fit.cox)
   
+  # sieve algorithm
+  sieve.results <- est_sieve()
+  
   # summary
   df_coef <- data.frame(true_coef = coef.true,                           # true coefficient function
                         est_coef_norm = as.numeric(coef.est.norm[[1]]),  # estimated coefficient function
@@ -129,7 +134,9 @@ for(iter in 1:N_iter){
                         lb_coef_cox = as.numeric(coef.est.cox[[1]] - qnorm(0.975) * coef.est.cox[[2]]), 
                         ub_coef_cox = as.numeric(coef.est.cox[[1]] + qnorm(0.975) * coef.est.cox[[2]]),
                         cma_lb_coef_cox = as.numeric(cma.coef.cox[[1]]),
-                        cma_ub_coef_cox = as.numeric(cma.coef.cox[[2]])) %>%
+                        cma_ub_coef_cox = as.numeric(cma.coef.cox[[2]]),
+                        est_coef_sieve = as.numeric(sieve.results[[1]]),
+                        se_coef_sieve = as.numeric(sieve.results[[2]])) %>%
     mutate(cover_coef_norm = (true_coef > lb_coef_norm) & (true_coef < ub_coef_norm),
            cover_coef_cox = (true_coef > lb_coef_cox) & (true_coef < ub_coef_cox),
            cover_cma_coef_norm = (true_coef > cma_lb_coef_norm) & (true_coef < cma_ub_coef_norm),
@@ -166,7 +173,7 @@ for(iter in 1:N_iter){
   p.est.norm <- matrix(nrow = n, ncol = length(tvec))
   for (i in 1:nrow(p.est.norm)) {
     for (j in 1:ncol(p.est.norm)) {
-      p.est.norm[i,j] <- get_cdf_AFT(time = tvec[j], lp = fit.norm$linear.predictors[i], scale = fit.norm$scale, family = family)
+      p.est.norm[i,j] <- get_cdf_AFT(time = tvec[j], lp = fit.norm$linear.predictors[i], scale = fit.norm$scale, family = "lognormal")
     }
   }
 
@@ -196,7 +203,8 @@ for(iter in 1:N_iter){
                         family = family,
                         nS = nS,
                         time_norm = time.norm,
-                        time_cox = time.cox)
+                        time_cox = time.cox,
+                        time_sieve = sieve.results[[3]])
   
   res <- list(info = df_info, coef = df_coef, surv = df_surv)
 
