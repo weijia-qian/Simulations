@@ -1,0 +1,240 @@
+---
+title: "Simulation Results"
+author: "Weijia Qian"
+date: '`r format(Sys.time(), "%Y-%m-%d")`'
+output:
+  html_document: 
+    code_folding: hide
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, repr.plot.width = 12, repr.plot.height = 8)
+library(CCMHr)
+library(kableExtra)
+library(MASS)
+library(mgcv)
+library(refund)
+library(scam)
+library(splines)
+library(tidyverse)
+
+folder_path <- "/Users/weijia/Research/FDA/Code/Simulations/Output/20241125"
+rda_files <- list.files(path = folder_path, pattern = "\\.RDA$", full.names = TRUE)
+all_results <- list()
+for (i in 1:length(rda_files)) {
+  all_results[[i]] <- loadRDa(rda_files[[i]])
+}
+```
+
+### Compare Average Computation Time
+```{r}
+# Initialize a dataframe to store all extracted values
+all_info <- data.frame(time_norm = numeric(),
+                       time_cox = numeric(),
+                       time_sieve = numeric())
+
+# Loop through all scenarios and iterations to extract 'info'
+for (scenario in all_results) {
+  for (iteration in scenario) {
+    # Extract the 'info' dataframe
+    info_df <- iteration$info
+    
+    # Append the values to the all_info dataframe
+    all_info <- rbind(all_info, info_df[, c("time_norm", "time_cox", "time_sieve")])
+  }
+}
+
+# Calculate the average of each variable
+averages <- colMeans(all_info)
+
+# Convert to a dataframe for plotting
+averages_df <- data.frame(
+  Model = c("AFT_lognormal", "Cox", "AFT_sieve"),
+  Time = as.numeric(averages)
+)
+
+# Create the bar plot
+ggplot(averages_df, aes(x = Model, y = Time, fill = Model)) +
+  geom_bar(stat = "identity", width = 0.5, show.legend = FALSE) +
+  labs(title = "Average Computation Time", x = "Model", y = "Time (seconds)") +
+  theme_minimal()
+```
+
+### Average Coefficient Estimations Across Iterations
+```{r}
+# Initialize a dataframe to store extracted values
+plot_data <- data.frame(
+  n = integer(),
+  nS = integer(),
+  family = factor(),
+  index = numeric(),
+  true_coef = numeric(),
+  est_coef_norm = numeric(),
+  est_coef_cox = numeric(),
+  est_coef_sieve = numeric(),
+  se_coef_norm = numeric(),
+  se_coef_cox = numeric(),
+  se_coef_sieve = numeric(),
+  cover_coef_norm = numeric(),
+  cover_coef_cox = numeric(),
+  cover_cma_coef_norm = numeric(),
+  cover_cma_coef_cox = numeric()
+)
+
+# Loop through all scenarios to extract coefficients
+for (scenario_idx in seq_along(all_results)) {
+  scenario <- all_results[[scenario_idx]]
+  for (iteration_idx in seq_along(scenario)) {
+    iteration <- scenario[[iteration_idx]]
+    
+    # Extract 'info' variables
+    n <- iteration$info$n
+    nS <- iteration$info$nS
+    family <- iteration$info$family
+    
+    # Extract 'coef' variables
+    coef_df <- iteration$coef
+    
+    # Add a normalized index for each coefficient (0 to 1)
+    temp_data <- data.frame(
+      n = n,
+      nS = nS,
+      family = family,
+      iteration = iteration_idx,
+      time = seq(0, 1, length.out = nS),
+      true_coef = coef_df$true_coef,
+      est_coef_norm = coef_df$est_coef_norm,
+      est_coef_cox = coef_df$est_coef_cox,
+      est_coef_sieve = coef_df$est_coef_sieve,
+      se_coef_norm = coef_df$se_coef_norm,
+      se_coef_cox = coef_df$se_coef_cox,
+      se_coef_sieve = coef_df$se_coef_sieve,
+      cover_coef_norm = coef_df$cover_coef_norm,
+      cover_coef_cox = coef_df$cover_coef_cox,
+      cover_cma_coef_norm = coef_df$cover_cma_coef_norm,
+      cover_cma_coef_cox = coef_df$cover_cma_coef_cox
+    )
+    
+    # Append to the main dataframe
+    plot_data <- rbind(plot_data, temp_data)
+  }
+}
+
+# Calculate the average for each time value across iterations
+plot_data_avg <- plot_data %>%
+  group_by(n, nS, family, time) %>%
+  summarise(
+    mean_true_coef = mean(true_coef, na.rm = TRUE),
+    mean_est_coef_norm = mean(est_coef_norm, na.rm = TRUE),
+    mean_est_coef_cox = mean(est_coef_cox, na.rm = TRUE) * -1,
+    mean_est_coef_sieve = mean(est_coef_sieve, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Reshape the data into a long format for plotting
+plot_data_long <- plot_data_avg %>%
+  pivot_longer(
+    cols = c(mean_est_coef_norm, mean_est_coef_cox, mean_est_coef_sieve),
+    names_to = "coef_type",
+    values_to = "coef_value"
+  )
+
+# Generate plots for each 'n' value
+plots <- list()
+n_values <- unique(plot_data_avg$n)
+
+for (n_value in n_values) {
+  # Filter data for the current 'n' value
+  current_data <- filter(plot_data_long, n == n_value)
+  
+  # Create the plot
+  p <- ggplot(current_data, aes(x = time, y = coef_value, color = coef_type, group = coef_type)) +
+    geom_line(alpha = 0.8, size = 0.5) +
+    facet_wrap(~ nS + family, labeller = label_both, nrow = 3) +
+    geom_line(aes(y = mean_true_coef), color = "black", alpha = 0.5, size = 0.5) + # Add true coef line
+    scale_color_manual(
+      values = c("red", "blue", "green"),
+      labels = c("Est Coef Norm", "Est Coef Cox", "Est Coef Sieve")
+    ) +
+    labs(
+      title = paste("Average Coefficient Estimations for n =", n_value),
+      x = "Time (s)",
+      y = "Average Estimated Coefficient",
+      color = "Coefficient Type"
+    ) +
+    theme_minimal() +
+    theme(strip.text = element_text(size = 10))
+  
+  # Add to the list of plots
+  plots[[paste0("n_", n_value)]] <- p
+}
+
+# Print plots
+plots[["n_100"]]
+plots[["n_200"]]
+plots[["n_500"]]
+```
+
+### MISE for Coefficient Estimations Across Iterations
+```{r}
+# Calculate the average for each time value across iterations
+table_data_avg <- plot_data %>%
+  group_by(n, nS, family) %>%
+  summarise(
+    mise_norm = round(mean(se_coef_norm, na.rm = TRUE),3),
+    mise_cox = round(mean(se_coef_cox, na.rm = TRUE),3),
+    mise_sieve = round(mean(se_coef_sieve, na.rm = TRUE),3),
+    .groups = "drop"
+  )
+
+# Display the table using kable() for better formatting
+kable(table_data_avg, caption = "MISE for Coefficient Estimations Across Iterations") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = FALSE) %>%
+  column_spec(1:6, width = "2.5cm") %>% 
+  row_spec(0, bold = TRUE, font_size = 14) 
+```
+
+### Average Pointwise Coverage Percentage for Coefficient Functions
+```{r}
+# Calculate the average for each time value across iterations
+table_data_avg2 <- plot_data %>%
+  group_by(n, nS, family) %>%
+  summarise(
+    cp_norm = round(mean(cover_coef_norm, na.rm = TRUE),3),
+    cp_cox = round(mean(cover_coef_cox, na.rm = TRUE),3),
+    .groups = "drop"
+  )
+
+# Display the table using kable() for better formatting
+kable(table_data_avg2, caption = "Average Pointwise Coverage Percentage for Coefficient Functions Across Iterations") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = FALSE) %>%
+  column_spec(1:4, width = "2.5cm") %>% 
+  row_spec(0, bold = TRUE, font_size = 14) 
+```
+
+### Average Simultaneous Coverage Percentage for Coefficient Functions
+```{r}
+# Calculate the average for each time value across iterations
+table_data_avg3 <- plot_data %>%
+  group_by(n, nS, family, iteration) %>%
+  summarise(
+    cp_cma_norm = (mean(cover_cma_coef_norm) == 1),
+    cp_cma_cox = (mean(cover_cma_coef_cox) == 1),
+    .groups = "drop"
+  ) %>%
+  group_by(n, nS, family) %>%
+  summarise(mean_cp_cma_norm = round(mean(cp_cma_norm), 3),
+            mean_cp_cma_cox = round(mean(cp_cma_cox), 3),
+            .groups = "drop")
+
+# Display the table using kable() for better formatting
+kable(table_data_avg3, caption = "Average Simultaneous Coverage Percentage for Coefficient Functions Across Iterations") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                full_width = FALSE) %>%
+  column_spec(1:4, width = "2.5cm") %>% 
+  row_spec(0, bold = TRUE, font_size = 14) 
+```

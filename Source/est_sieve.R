@@ -1,7 +1,7 @@
 ### sieve maximum likelihood approach by Liu et al.
 
 est_sieve <- function(data = sim_data$data, nbasis_g = 5, nbasis_beta = 5, lower_bound = -12, upper_bound = 5){
-  optim_bound <- 1000 # an option in optimization procedure not related to simulation setup
+  optim_bound <- 1000
   factr <- 1e12
   a <- lower_bound
   b <- upper_bound
@@ -30,7 +30,7 @@ est_sieve <- function(data = sim_data$data, nbasis_g = 5, nbasis_beta = 5, lower
   
   # Create B-spline basis for beta(s) estimation
   rangeval_beta <- c(0, 1)
-  basisobj_beta <- create.bspline.basis(rangeval_beta, nbasis_beta) # nbasis_beta is set before the loop
+  basisobj_beta <- create.bspline.basis(rangeval_beta, nbasis_beta) 
   
   # Calculate int phi_k(s)z_i(s)ds
   gen_z_phi <- function(z, basisobj, k){
@@ -41,7 +41,7 @@ est_sieve <- function(data = sim_data$data, nbasis_g = 5, nbasis_beta = 5, lower
   
   # placeholder of the integral of phi(s) * Z(s)
   # where phi(s) is the basis function of beta(s)
-  # please refer to  implementation.pdf for the definition
+  # please refer to implementation.pdf for the definition
   int_phi_z <- matrix(0, nbasis_beta, n)
   
   for (i in 1:nbasis_beta) {
@@ -406,64 +406,64 @@ est_sieve <- function(data = sim_data$data, nbasis_g = 5, nbasis_beta = 5, lower
   }
   
   H_theta[nbasis_beta + (1:nbasis_g), nbasis_beta + (1:nbasis_g)] <- -int_exp_phi_I/n
-  tryCatch(                
-    
-    # Specifying expression
-    expr = {                      
-      
-      param_hat_se[itr, ] <- sqrt(diag(solve(-H_theta))/n)
-      
-      #write.csv(param_hat_se, file = paste0("../FAFT/sim_data/my_param",n,"_",error_distribution,"_", tau, "_", nbasis_beta, "_se.csv"))
-      
-      #########################
-      # Simultaneous CI
-      #########################
-      ss <- seq(0, 1, .01)
-      gg <- eval.basis(ss, basisobj_beta)
-      var_cov <- solve(-H_theta)[1:nbasis_beta, 1:nbasis_beta]
-      
-      mean_vec <- rep(0, length(ss))
-      cov_mat <- gg %*% var_cov %*% t(gg)
-      cov_mat <- cov_mat/(sqrt(diag(cov_mat)) %*% t(sqrt(diag(cov_mat))))
-      
-      Q <- mvrnorm(n = 10000,
-                   mu = mean_vec,
-                   Sigma = cov_mat)
-      
-      Q_max <- rep(0,10000)
-      for(i in 1:nrow(Q)){
-        Q_max[i] <- max(abs(Q[i, ]))
-      }
-      
-      Q_n_a <- as.numeric(quantile(Q_max, c(0.95)))
-      
-      xi <- seq(0, .5, 0.05)
-      for(k in 1:length(xi)){
-        ss <- seq(xi[k], 1-xi[k], .01)
-        gg <- eval.basis(ss, basisobj_beta)
-        var_cov <- solve(-H_theta)[1:nbasis_beta, 1:nbasis_beta]
-        mean_vec <- rep(0, length(ss))
-        cov_mat <- gg %*% var_cov %*% t(gg)
-        cov_mat <- cov_mat/(sqrt(diag(cov_mat))%*% t(sqrt(diag(cov_mat))))
-        
-        beta_hat_s <- eval.basis(ss, basisobj_beta) %*% param_hat[itr, 1:nbasis_beta]
-        beta_cp[k, itr] <- (max(abs((beta_hat_s - beta(ss))/sqrt(diag(gg %*% var_cov %*% t(gg))/n))) <= Q_n_a)
-      }    
-    },
-    
-    # Specifying error message
-    error = function(e){
-      print("There was an error message.")
-    },
-
-    warning = function(w){
-      print("There was a warning message.")
-    },
-
-    finally = {
-      print("finally Executed")
-    }
-  )
+  # tryCatch(                
+  #   
+  #   # Specifying expression
+  #   expr = {                      
+  #     
+  #     param_hat_se[itr, ] <- sqrt(diag(solve(-H_theta))/n)
+  #     
+  #     #write.csv(param_hat_se, file = paste0("../FAFT/sim_data/my_param",n,"_",error_distribution,"_", tau, "_", nbasis_beta, "_se.csv"))
+  #     
+  #     #########################
+  #     # Simultaneous CI
+  #     #########################
+  #     ss <- seq(0, 1, .01)
+  #     gg <- eval.basis(ss, basisobj_beta)
+  #     var_cov <- solve(-H_theta)[1:nbasis_beta, 1:nbasis_beta]
+  #     
+  #     mean_vec <- rep(0, length(ss))
+  #     cov_mat <- gg %*% var_cov %*% t(gg)
+  #     cov_mat <- cov_mat/(sqrt(diag(cov_mat)) %*% t(sqrt(diag(cov_mat))))
+  #     
+  #     Q <- mvrnorm(n = 10000,
+  #                  mu = mean_vec,
+  #                  Sigma = cov_mat)
+  #     
+  #     Q_max <- rep(0,10000)
+  #     for(i in 1:nrow(Q)){
+  #       Q_max[i] <- max(abs(Q[i, ]))
+  #     }
+  #     
+  #     Q_n_a <- as.numeric(quantile(Q_max, c(0.95)))
+  #     
+  #     xi <- seq(0, .5, 0.05)
+  #     for(k in 1:length(xi)){
+  #       ss <- seq(xi[k], 1-xi[k], .01)
+  #       gg <- eval.basis(ss, basisobj_beta)
+  #       var_cov <- solve(-H_theta)[1:nbasis_beta, 1:nbasis_beta]
+  #       mean_vec <- rep(0, length(ss))
+  #       cov_mat <- gg %*% var_cov %*% t(gg)
+  #       cov_mat <- cov_mat/(sqrt(diag(cov_mat))%*% t(sqrt(diag(cov_mat))))
+  #       
+  #       beta_hat_s <- eval.basis(ss, basisobj_beta) %*% param_hat[itr, 1:nbasis_beta]
+  #       beta_cp[k, itr] <- (max(abs((beta_hat_s - beta(ss))/sqrt(diag(gg %*% var_cov %*% t(gg))/n))) <= Q_n_a)
+  #     }    
+  #   },
+  #   
+  #   # Specifying error message
+  #   error = function(e){
+  #     print("There was an error message.")
+  #   },
+  # 
+  #   warning = function(w){
+  #     print("There was a warning message.")
+  #   },
+  # 
+  #   finally = {
+  #     print("finally Executed")
+  #   }
+  # )
   
   #################g C-norm###########################
   # r_hat <- Y - c(beta_hat %*% int_phi_z)

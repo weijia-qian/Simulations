@@ -6,6 +6,7 @@
 # and fits functional AFT and Cox models
 ####################################################################
 
+suppressPackageStartupMessages(library(caret))
 suppressPackageStartupMessages(library(fda))
 suppressPackageStartupMessages(library(here))
 suppressPackageStartupMessages(library(MASS))
@@ -13,6 +14,7 @@ suppressPackageStartupMessages(library(mgcv))
 suppressPackageStartupMessages(library(refund))
 suppressPackageStartupMessages(library(scam))
 suppressPackageStartupMessages(library(splines))
+suppressPackageStartupMessages(library(survival))
 suppressPackageStartupMessages(library(tidyverse))
 
 wd = getwd()
@@ -29,28 +31,28 @@ if(substring(wd, 2, 6) == "Users"){
 source(here::here("Source", "simulate_AFT.R"))
 source(here::here("Source", "simulate_Cox.R"))
 source(here::here("Source", "est_sieve.R"))
+source(here::here("Source", "calc_auc_brier.R"))
 source(here::here("Source", "utils_summary.R"))
+load(here::here("Source", "dat_func.Rdata")) # load real data
 
 ###############################################################
 ## set simulation design elements
 ###############################################################
-
 n = c(100, 200, 500)
 family = c("lognormal", "loglogistic", "cox.ph")
 nS = c(50, 100, 500)
+k = c(6, 8)
 seed_start = 1000
-N_iter = 50
+N_iter = 500
 
 params = expand.grid(seed_start = seed_start,
                      n = n,
                      family = family,
-                     nS = nS)
+                     nS = nS,
+                     k = k)
+params = params[!(params$family == "cox.ph" & params$k == 8),]
 
-## record date for analysis; create directory for results
-Date = gsub("-", "", Sys.Date())
-dir.create(file.path(here::here("Output"), Date), showWarnings = FALSE)
-
-## define number of simulations and parameter scenarioå
+## define number of simulations and parameter scenarios
 if(doLocal) {
   scenario = 7
   N_iter = 2
@@ -59,30 +61,23 @@ if(doLocal) {
   scenario <- as.numeric(commandArgs(trailingOnly=TRUE))
 }
 
-###############################################################
-## start simulation code
-###############################################################
-
-###############################################################
-## set simulation design elements
-###############################################################
-# load real data
-load(here::here("Source", "dat_func.Rdata"))
-
 n = params$n[scenario]
 family = params$family[scenario]
 nS = params$nS[scenario]
+k = params$k[scenario]
 SEED.START = params$seed_start[scenario]
 
+###############################################################
+## run simulations
+###############################################################
 results = vector("list", length = N_iter)
 for(iter in 1:N_iter){
   # set seed
   seed.iter = (SEED.START - 1)*N_iter + iter
-  #set.seed(seed.iter)
 
   # simulate data
   if(family %in% c("lognormal", "loglogistic")){
-    sim_data <- simulate_AFT(family = family, n = n, nS = nS, seed = seed.iter)
+    sim_data <- simulate_AFT(family = family, n = n, nS = nS, k = k, seed = seed.iter)
   }else{
     sim_data <- simulate_Cox(n = n, nS = nS, seed = seed.iter)
   }
@@ -90,15 +85,61 @@ for(iter in 1:N_iter){
   ###############################################################
   ## fit functional AFT and Cox model
   ###############################################################
-  
-  ### linear functional log-normal AFT model
-  time.norm <- as.numeric(system.time(fit.norm <- gam(logY ~ 1 + s(S, by = X_L, bs = "ps", k = 20), 
+  # linear functional log-normal AFT model
+  time.norm <- as.numeric(system.time(fit.norm <- gam(logY ~ 1 + s(S, by = X_L, bs = "ps", k = 30), 
                                                       family = cnorm(), data = sim_data$data))[3])
-  ### linear functional Cox model
-  time.cox <- as.numeric(system.time(fit.cox <- gam(Y ~ s(S, by = X_L, bs = "ps", k = 20), data = sim_data$data, 
+  # linear functional Cox model
+  time.cox <- as.numeric(system.time(fit.cox <- gam(Y ~ s(S, by = X_L, bs = "ps", k = 30), data = sim_data$data, 
                                                         weights = delta, family = cox.ph))[3])
   
-  ### calculate pointwise squared error and MISE of estimated beta(s)
+  ###############################################################
+  ## Harrell’s C-index and Brier score
+  ###############################################################
+  #set.seed(seed.iter) 
+  #n_folds <- 10 # number of folds
+  ### variables that store the c-index and Brier's score in each calculation
+  #AUC_norm <- AUC_cox <- rep(0, n_folds)
+  #Brier_norm <- Brier_cox <- rep(0, n_folds)
+  ### use "createFolds" function from "caret" package to divide real data into n_folds folds
+  #fold <- createFolds(sim_data$data$Y, k = n_folds, list = FALSE)
+  
+  ## survival time and status
+  time_test <- sim_data$data$Y
+  event_test <- sim_data$data$delta
+
+  ## get unique ordered survival times
+  ut_test <- unique(time_test[event_test == 1])
+  ut_test <- ut_test[order(ut_test)]
+  
+  ## derive the KM estimate of the censoring time
+  ut_test_censor <- unique(time_test[event_test == 0])
+  ut_test_censor <- ut_test_censor[order(ut_test_censor)]
+  ## get KM estimates of censoring time for test data
+  KM_test_censor <- unique(survfit(Surv(time_test,1-event_test)~1)$surv)
+
+  ## obtain linear predictors
+  eta_norm <- -fit.norm$linear.predictors
+  #eta_cox <- rowSums(predict(fit.cox, test_data, type="terms"))
+  eta_cox <- fit.cox$linear.predictors
+  
+  ## calculate c-index
+  AUC_norm <- cal_c(marker = eta_norm, Stime = time_test, status = event_test)
+  AUC_cox <- cal_c(marker = eta_cox, Stime = time_test, status = event_test)
+  
+  ## calculate the brier score
+  tmax <- round(quantile(sim_data$data$t, 0.95))
+  tvec <- seq(0, tmax, length.out = 1000)
+  
+  S_norm <- cal_stime(fit = fit.norm, tgrid = tvec, family = 'lognormal')
+  S_cox <- cal_stime(fit = fit.cox, tgrid = tvec, family = 'cox.ph')
+  
+  Brier_norm <- cal_Brier(S_norm, Stime = time_test, status = event_test, tgrid = tvec)
+  Brier_cox <- cal_Brier(S_cox, Stime = time_test, status = event_test, tgrid = tvec)
+  
+  ###############################################################
+  ## pointwise squared errors, pointwise CIs and CMA CIs for estimated beta
+  ###############################################################
+  # calculate pointwise squared errors
   svec <- seq(0, 1, len = nS)
   df_pred <- data.frame(S = svec, X_L = 1)
   coef.true <- sim_data$coefficients$beta1
@@ -118,9 +159,9 @@ for(iter in 1:N_iter){
   cma.coef.norm <- get_CMA(fit.norm)
   cma.coef.cox <- get_CMA(fit.cox)
   
-  # sieve algorithm
-  sieve.results <- est_sieve()
-  
+  # fit AFT model using sieve algorithm
+  sieve.results <- est_sieve(data = sim_data$data)
+
   # summary
   df_coef <- data.frame(true_coef = coef.true,                           # true coefficient function
                         est_coef_norm = as.numeric(coef.est.norm[[1]]),  # estimated coefficient function
@@ -142,57 +183,29 @@ for(iter in 1:N_iter){
            cover_cma_coef_norm = (true_coef > cma_lb_coef_norm) & (true_coef < cma_ub_coef_norm),
            cover_cma_coef_cox = (true_coef > cma_lb_coef_cox) & (true_coef < cma_ub_coef_cox))
   
-  ### calculate pointwise squared error and MISE of estimated survival function
-  tmax <- round(max(sim_data$data$t))
-  tvec <- seq(0, tmax, length.out = 1000)
-  
-  # function to calculate P(T < t|X) for AFT models
-  get_cdf_AFT <- function(time, lp, scale, family = "loglogistic") {
-    if (family == "loglogistic") {
-      p <- 1 / (1 + (exp(lp) / time)^(1 / scale))
-    } else if (family == "lognormal") {
-      z <- (log(time) - lp) / scale
-      p <- pnorm(z)
-    } 
-    return(p)
-  }
-  
+  ###############################################################
+  ## pointwise squared errors for survival function
+  ###############################################################
   # true survival function
-  if (family %in% c("lognormal", "loglogistic")) {
-    p.true <- matrix(nrow = n, ncol = length(tvec))
-    for (i in 1:n) {
-      for (j in 1:length(tvec)) {
-        p.true[i,j] <- get_cdf_AFT(time = tvec[j], lp = sim_data$data$lp[i], scale = sim_data$coefficients$b[1], family = family)
-      }
-    }
+  if (family == "lognormal") {
+    lp = sim_data$data$lp
+    scale = sim_data$coefficients$b[1]
+    S_true <- outer(lp, tvec, function(lp_i, tvec_j) pnorm((log(tvec_j) - lp_i) / scale, lower.tail = FALSE))
+  } else if (family == "loglogistic") {
+    lp = sim_data$data$lp
+    scale = sim_data$coefficients$b[1]
+    S_true <- outer(lp, tvec, function(lp_i, tvec_j) 1 - 1 / (1 + (exp(lp_i) / tvec_j)^(1 / scale)))
   } else {
-    p.true = 1 - sim_data$data$Si
+    S_true = sim_data$data$Si
   }
-
-  # estimated survival function from AFT model
-  p.est.norm <- matrix(nrow = n, ncol = length(tvec))
-  for (i in 1:nrow(p.est.norm)) {
-    for (j in 1:ncol(p.est.norm)) {
-      p.est.norm[i,j] <- get_cdf_AFT(time = tvec[j], lp = fit.norm$linear.predictors[i], scale = fit.norm$scale, family = "lognormal")
-    }
-  }
-
-  # estimated survival function from Cox model
-  t0 <- rev(fit.cox$family$data$tr)
-  H0_hat <- rev(fit.cox$family$data$h) 
-  H0_fit <- scam(H0_hat ~ s(t0, bs = "mpi") - 1) 
-  H0_prd <- pmax(0, predict(H0_fit, newdata = data.frame(t0 = tvec)))
-  eta_i <- matrix(fit.cox$linear.predictors, ncol = 1)
-  Si <- exp(-(exp(eta_i) %*% H0_prd))
-  p.est.cox <- 1 - Si
   
   # calculate pointwise squared error and MISE
   df_surv <- data.frame(time = tvec,
                         #true_surv = 1 - p.true,
                         #est_surv_norm = 1 - p.est.norm,
                         #est_surv_cox = 1 - p.est.cox,
-                        se_surv_norm = colMeans((p.true - p.est.norm)^2),
-                        se_surv_cox = colMeans((p.true - p.est.cox)^2))
+                        se_surv_norm = colMeans((S_true - S_norm)^2),
+                        se_surv_cox = colMeans((S_true - S_cox)^2))
   #mise.surv.norm <- mean(se.surv.norm)
   #mise.surv.cox <- mean(se.surv.cox)
   
@@ -202,6 +215,11 @@ for(iter in 1:N_iter){
                         n = n,
                         family = family,
                         nS = nS,
+                        k = k,
+                        AUC_norm,
+                        AUC_cox,
+                        Brier_norm,
+                        Brier_cox,
                         time_norm = time.norm,
                         time_cox = time.cox,
                         time_sieve = sieve.results[[3]])
@@ -212,6 +230,9 @@ for(iter in 1:N_iter){
 
 } # end for loop
 
+# record date for analysis; create directory for results
+Date = gsub("-", "", Sys.Date())
+dir.create(file.path(here::here("Output"), Date), showWarnings = FALSE)
 
 filename = paste0(here::here("Output", Date), "/", scenario, ".RDA")
 save(results,

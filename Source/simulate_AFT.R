@@ -4,12 +4,17 @@ simulate_AFT = function(data = dat_func,
                         npc = 5,
                         tmax = 1,
                         nS = 401,
-                        K = 6,
-                        bs_coef = c(0, -0.4, -0.2, 0.1, 0.1, 0.1),
+                        k = 6,
+                        bs_coef = c(0, -1, -0.5, 0.25, 0.25, 0.25),
                         beta_0 = log(62),
                         b = 0.1,
-                        u = 600,
+                        u = 6000,
                         seed = 916){
+  
+  if (k == 8) {
+    bs_coef = c(-1, 0.5, -0.7, -0.4, 0.8, -0.5, 0.9, -0.6)
+    u = 250
+  }
   
   # FPCA on real data
   df_wide <- pivot_wider(subset(data, select = -seconds), names_from = frame, values_from = percent_change, 
@@ -43,7 +48,7 @@ simulate_AFT = function(data = dat_func,
   
   # define basis
   svec <- seq(0, tmax, length.out = nS) # observed points on the functional domain
-  B <- bs(svec, df = K, intercept = TRUE)
+  B <- bs(svec, df = k, intercept = TRUE)
   
   # obtain beta_1
   beta_1 <- B %*% bs_coef
@@ -105,6 +110,6 @@ simulate_AFT = function(data = dat_func,
                        beta1 = beta_1,
                        b = b)
   
-  return(list(data = sim_data_wide, K = K, bs_coef = bs_coef, coefficients = df_coef, family = family))
+  return(list(data = sim_data_wide, k = k, bs_coef = bs_coef, coefficients = df_coef, family = family))
   
 }
