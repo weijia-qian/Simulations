@@ -6,7 +6,7 @@
 # and fits functional AFT and Cox models
 ####################################################################
 
-suppressPackageStartupMessages(library(caret))
+#suppressPackageStartupMessages(library(caret))
 suppressPackageStartupMessages(library(fda))
 suppressPackageStartupMessages(library(here))
 suppressPackageStartupMessages(library(MASS))
