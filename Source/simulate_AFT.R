@@ -4,14 +4,20 @@ simulate_AFT = function(data = dat_func,
                         npc = 5,
                         tmax = 1,
                         nS = 401,
-                        k = 6,
-                        bs_coef = c(0, -1, -0.5, 0.25, 0.25, 0.25),
+                        beta_type = "simple",
+                        #k = 6,
+                        #bs_coef = c(0, -1, -0.5, 0.25, 0.25, 0.25),
                         beta_0 = log(62),
                         b = 0.1,
-                        u = 6000,
+                        #u = 6000,
                         seed = 916){
   
-  if (k == 8) {
+  if (beta_type == "simple") {
+    k = 6
+    bs_coef = c(0, -1, -0.5, 0.25, 0.25, 0.25)
+    u = 6000
+  } else {
+    k = 8
     bs_coef = c(-1, 0.5, -0.7, -0.4, 0.8, -0.5, 0.9, -0.6)
     u = 250
   }

@@ -20,12 +20,34 @@ library(scam)
 library(splines)
 library(tidyverse)
 
-folder_path <- "/Users/weijia/Research/FDA/Code/Simulations/Output/20241125"
+folder_path <- "/Users/weijia/Research/FDA/Code/Simulations/Output/20241211"
 rda_files <- list.files(path = folder_path, pattern = "\\.RDA$", full.names = TRUE)
 all_results <- list()
 for (i in 1:length(rda_files)) {
   all_results[[i]] <- loadRDa(rda_files[[i]])
 }
+```
+
+### Averge C-index and Brier score
+```{r}
+all_info <- data.frame()
+# Loop through all scenarios and iterations to extract 'info'
+for (scenario in all_results) {
+  for (iteration in scenario) {
+    all_info <- rbind(all_info, iteration$info)
+  }
+}
+
+df_summary <- all_info %>%
+  group_by(k, family, n, nS) %>%
+  summarise(
+    mean_AUC_norm = round(mean(AUC_norm, na.rm = TRUE), 3),
+    mean_AUC_cox = round(mean(AUC_cox, na.rm = TRUE), 3),
+    mean_Brier_norm = round(mean(Brier_norm, na.rm = TRUE), 3),
+    mean_Brier_cox = round(mean(Brier_cox, na.rm = TRUE), 3),
+    .groups = "drop" # Prevents nested groupings in the result
+  )
+df_summary
 ```
 
 ### Compare Average Computation Time

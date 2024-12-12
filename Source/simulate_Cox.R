@@ -1,9 +1,11 @@
 ### Simulate survival data from Cox model
 
 simulate_Cox = function(data = dat_func,
+                        beta_type = "simple",
                         n = 500,
                         npc = 5,
-                        tmax = 1,
+                        tmax = 300,
+                        range_s = 1,
                         nS = 401,
                         u = 140,
                         seed = 916){
@@ -13,7 +15,7 @@ simulate_Cox = function(data = dat_func,
   df_wide <- pivot_wider(subset(data, select = -seconds), names_from = frame, values_from = percent_change, 
                          names_prefix = "percent_change_")
   s <- unique(data$seconds)   # original grid
-  ss <- seq(0, tmax, length.out = nS)  # simulation grid
+  ss <- seq(0, range_s, length.out = nS)  # simulation grid
   if (nS <= length(s)) {
     # downsampling the original functional domain
     matrix_wide <- as.matrix(df_wide[, -(1:8)])[, seq(1, length(s), length.out = nS)] 
@@ -61,7 +63,7 @@ simulate_Cox = function(data = dat_func,
   H0_fit <- scam(H0_hat ~ s(t0, bs = "mpi") - 1) 
   # set the time grid to evaluate cumulative baseline hazard 
   nt_pred <- 1000 # number of potential survival times 
-  tgrid_sim <- seq(0, 150, len = nt_pred) 
+  tgrid_sim <- seq(0, tmax, len = nt_pred) 
   # derive final estimates on the grid 
   H0_prd <- pmax(0, predict(H0_fit, newdata = data.frame(t0 = tgrid_sim)))
 
@@ -70,8 +72,14 @@ simulate_Cox = function(data = dat_func,
                        L = I(matrix(1 / nS, ncol = nS, nrow = n)), 
                        S = I(matrix(ss, ncol = nS, nrow = n, byrow = TRUE)))
   df_sim$X_L = I(df_sim$X * df_sim$L)
-  eta_i <- predict(fit, newdata = df_sim, type = "terms")
-
+  if (beta_type == "simple"){
+    beta <- function(s) 0.3 - (s - 0.2)^2
+    eta_i <- sim_curves %*% beta(ss) * (range_s / nS)
+  } else {
+    #beta <- function(s) -0.3 + cos(10 * s)
+    eta_i <- predict(fit, newdata = df_sim, type = "terms")
+  }
+  
   ### 5. Estimate the survival function 
   Si <- exp(-(exp(eta_i) %*% H0_prd))
 
@@ -83,10 +91,11 @@ simulate_Cox = function(data = dat_func,
     if(all(Si[i,] > U[i])){Ti[i] <- max(tgrid_sim) + 1} 
     else{Ti[i] <- tgrid_sim[min(which(Si[i,] < U[i]))]} 
   }
+  summary(Ti)
 
   ### 7. Simulate censoring times from uniform (0, u)
   set.seed(seed)
-  Ci <- runif(n, 40, u)
+  Ci <- runif(n, 60, u)
   Yi <- pmin(Ci, Ti) # observed time to event 
   di <- as.numeric(Ti <= Ci) # binary event indicator
 
@@ -108,9 +117,15 @@ simulate_Cox = function(data = dat_func,
                        Si = I(Si))
   
   # save true coefficient functions
-  df_coef = data.frame(time = ss,
-                       beta1 = as.numeric(predict(fit, newdata = data.frame(S = ss, X_L = 1), type = "terms"))
-                       )
+  if (beta_type == "simple"){
+    df_coef = data.frame(time = ss,
+                         beta1 = beta(ss)
+                         )
+  } else {
+    df_coef = data.frame(time = ss,
+                         beta1 = as.numeric(predict(fit, newdata = data.frame(S = ss, X_L = 1), type = "terms"))
+                         )
+  }
   
   return(list(data = sim_data_wide, coefficients = df_coef, family = "cox.ph"))
 

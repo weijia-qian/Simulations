@@ -38,23 +38,24 @@ load(here::here("Source", "dat_func.Rdata")) # load real data
 ###############################################################
 ## set simulation design elements
 ###############################################################
-n = c(100, 200, 500)
 family = c("lognormal", "loglogistic", "cox.ph")
+n = c(100, 200, 500)
 nS = c(50, 100, 500)
-k = c(6, 8)
+beta_type = c('simple', 'complex')
 seed_start = 1000
 N_iter = 500
 
 params = expand.grid(seed_start = seed_start,
-                     n = n,
                      family = family,
+                     n = n,
                      nS = nS,
-                     k = k)
-params = params[!(params$family == "cox.ph" & params$k == 8),]
+                     beta_type = beta_type)
+params = params[!(params$family %in% c("lognormal", "loglogistic") & params$beta_type == "complex"),]
+params = params[!(params$family %in% c("cox.ph") & params$nS != 500),]
 
 ## define number of simulations and parameter scenarios
 if(doLocal) {
-  scenario = 7
+  scenario = 3
   N_iter = 2
 }else{
   # defined from batch script params
@@ -64,7 +65,7 @@ if(doLocal) {
 n = params$n[scenario]
 family = params$family[scenario]
 nS = params$nS[scenario]
-k = params$k[scenario]
+beta_type = params$beta_type[scenario]
 SEED.START = params$seed_start[scenario]
 
 ###############################################################
@@ -77,9 +78,9 @@ for(iter in 1:N_iter){
 
   # simulate data
   if(family %in% c("lognormal", "loglogistic")){
-    sim_data <- simulate_AFT(family = family, n = n, nS = nS, k = k, seed = seed.iter)
+    sim_data <- simulate_AFT(family = family, n = n, nS = nS, beta_type = beta_type, seed = seed.iter)
   }else{
-    sim_data <- simulate_Cox(n = n, nS = nS, seed = seed.iter)
+    sim_data <- simulate_Cox(n = n, nS = nS, beta_type = beta_type, seed = seed.iter)
   }
 
   ###############################################################
@@ -212,10 +213,10 @@ for(iter in 1:N_iter){
   df_info <- data.frame(scenario = scenario,
                         iter = iter,
                         seed = seed.iter,
-                        n = n,
                         family = family,
+                        n = n,
                         nS = nS,
-                        k = k,
+                        beta_type = beta_type,
                         AUC_norm,
                         AUC_cox,
                         Brier_norm,
