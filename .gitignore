@@ -5,11 +5,11 @@
 .Rhistory
 
 
-data
-output
+Data
+Output
 
-output/*RDA
-output/*Rdata
+Output/*RDA
+Output/*Rdata
 
 
 analysis/*_cache/
@@ -22,5 +22,6 @@ drafts/*_cache/
 
 *talk_figures*
 *html
+*png
 
 sandbox/
