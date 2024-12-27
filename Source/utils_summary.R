@@ -4,7 +4,7 @@ get_CMA <- function(fit){
   # extract point estimates and pointwise standard errors 
   beta_hat <- coef_est$fit[, 1] 
   se_beta_hat <- coef_est$se.fit[,1]
-  # get the design matrix associated with svec
+  # get the design matrix associated with sgrid
   lpmat <- predict(fit, newdata = df_pred, type = "lpmatrix")
   # get the column indices associated with the functional term
   inx_beta <- which(grepl("s\\(S\\):X_L\\.[0-9]+", dimnames(lpmat)[[2]]))
@@ -16,7 +16,7 @@ get_CMA <- function(fit){
   # number of bootstrap samples (B)
   nboot <- 1e4 
   # set up container for bootstrap 
-  beta_mat_boot <- matrix(NA, nboot, length(svec))
+  beta_mat_boot <- matrix(NA, nboot, length(sgrid))
   #Do the bootstrap 
   for(i in 1:nboot){ 
     beta_sp_i <- MASS::mvrnorm(n = 1, mu = beta_sp, Sigma = Vbeta_sp) 

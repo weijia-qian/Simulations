@@ -23,28 +23,24 @@ cal_c <- function(marker, Stime, status){
   1-num/denom
 }
 
-### function "cal_stime()" returns the survival times estimates on the test data in cross-validated prediction
-cal_stime <- function(fit, tgrid_sim = seq(0, 10, len = 1000), family = 'cox.ph'){
-  if (family == 'cox.ph') {
+### function "cal_stime()" returns the survival times estimates
+cal_stime <- function(fit, data, tgrid = seq(0, 10, len = 1000), family = "cox.ph"){
+  if (family == "cox.ph") {
     ## calculate estimated baseline hazard
-    t0 <- rev(fit$family$data$tr)
-    H0_hat <- rev(fit$family$data$h) ## estimate for the baseline cumulative hazard function \int_0^t \lambda_0(s)ds
-    H0_fit <- gam(H0_hat ~ s(t0, pc = 0)-1) ## smooth the cumulative hazard
+    t0 <- rev(fit$family$data$tr) # observed event times
+    H0_hat <- rev(fit$family$data$h) # Breslow estimator of the cumulative hazard function
+    H0_fit <- scam(H0_hat ~ s(t0, bs = "mpi") - 1) # smooth while imposing non-decreasing shape constraints
+    #H0_fit <- gam(H0_hat ~ s(t0, pc = 0)-1)
     ## evaluate smoothed H0 on fine grid
-    H0_prd <- pmax(0, predict(H0_fit, newdata = data.frame(t0 = tgrid_sim))) ## truncate cumulative hazard at 0
+    H0_prd <- pmax(0, predict(H0_fit, newdata = data.frame(t0 = tgrid)))
     ## estimate eta from estimated functional surface of real data
-    eta_i <- matrix(predict(fit, sim_data$data), ncol = 1)
-    #eta_i <- matrix(fit$linear.predictors, ncol = 1)
+    eta_i <- matrix(predict(fit, data), ncol = 1)
     ## calculate survival times
     S_i <- exp(-(exp(eta_i) %*% H0_prd))
-  } else if (family == 'lognormal'){
-    lp <- fit$linear.predictors
+  } else if (family == "lognormal"){
+    lp <- predict(fit, data, type = "response")
     scale <- fit$scale
-    S_i <- outer(lp, tgrid_sim, function(lp_i, tgrid_sim_j) pnorm((log(tgrid_sim_j) - lp_i) / scale, lower.tail = FALSE))
-  } else if (family == 'loglogistic'){
-    lp <- fit$linear.predictors
-    scale <- fit$scale
-    S_i <- outer(lp, tgrid_sim, function(lp_i, tgrid_sim_j) 1 - 1 / (1 + (exp(lp_i) / tgrid_sim_j)^(1 / scale)))
+    S_i <- outer(lp, tgrid, function(lp_i, tgrid_j) pnorm((log(tgrid_j) - lp_i) / scale, lower.tail = FALSE))
   }
   return(S_i)
 }
@@ -91,4 +87,3 @@ cal_Brier <- function(S, Stime, status, tgrid = seq(0, 10, len=1000)){
   iBrier <- iBrier/max(utimes)
   return(iBrier)
 }
-

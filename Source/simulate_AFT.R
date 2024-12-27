@@ -26,7 +26,7 @@ simulate_AFT = function(data = dat_func,
   df_wide <- pivot_wider(subset(data, select = -seconds), names_from = frame, values_from = percent_change, 
                          names_prefix = "percent_change_")
   s <- unique(data$seconds)   # original grid
-  svec <- seq(0, tmax, length.out = nS)  # simulation grid
+  sgrid <- seq(0, tmax, length.out = nS)  # simulation grid
   if (nS <= length(s)) {
     # downsampling the original functional domain
     matrix_wide <- as.matrix(df_wide[, -(1:8)])[, seq(1, length(s), length.out = nS)] 
@@ -37,7 +37,7 @@ simulate_AFT = function(data = dat_func,
     })
     matrix_wide <- t(matrix_wide)
   }
-  fpca.results <- fpca.face(matrix_wide, argvals = svec, pve = 0.99)
+  fpca.results <- fpca.face(matrix_wide, argvals = sgrid, pve = 0.99)
   
   # re-scaled to appear on the scale of the original functions 
   Phi <- sqrt(nS) * fpca.results$efunctions
@@ -53,8 +53,8 @@ simulate_AFT = function(data = dat_func,
   sim_curves[,1] <- 0 # assign the initial value to zero
   
   # define basis
-  svec <- seq(0, tmax, length.out = nS) # observed points on the functional domain
-  B <- bs(svec, df = k, intercept = TRUE)
+  sgrid <- seq(0, tmax, length.out = nS) # observed points on the functional domain
+  B <- bs(sgrid, df = k, intercept = TRUE)
   
   # obtain beta_1
   beta_1 <- B %*% bs_coef
@@ -96,7 +96,7 @@ simulate_AFT = function(data = dat_func,
   # set up data structure for mgcv fitting
   lvec <- matrix(1 / nS, nS, 1) # quadrature weights for Riemann integration
   L <- kronecker(matrix(1, n, 1), t(lvec)) # matrix containing quadrature weights for all participants
-  S <- kronecker(matrix(1, n, 1), t(svec)) # matrix containing functional domain values
+  S <- kronecker(matrix(1, n, 1), t(sgrid)) # matrix containing functional domain values
   
   # save simulated data
   sim_data_wide = data.frame(ID = seq(1:n), 
@@ -111,7 +111,7 @@ simulate_AFT = function(data = dat_func,
                              logY = I(logY))
   
   # save true coefficient functions
-  df_coef = data.frame(time = svec,
+  df_coef = data.frame(time = sgrid,
                        beta0 = rep(beta_0, nS),
                        beta1 = beta_1,
                        b = b)

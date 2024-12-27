@@ -12,6 +12,7 @@ output:
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, repr.plot.width = 12, repr.plot.height = 8)
 library(CCMHr)
+library(gt)
 library(kableExtra)
 library(MASS)
 library(mgcv)
@@ -28,7 +29,48 @@ for (i in 1:length(rda_files)) {
 }
 ```
 
-### Averge C-index and Brier score
+### Function to generate summary table
+```{r}
+# Transpose dataset from wide to long
+create_table <- function(data, var, beta_type, title, subtitle){
+  data1 <- data %>%
+  pivot_longer(cols = var,
+               names_to = "type",
+               values_to = "value") %>%
+  mutate(est_model = case_when(str_detect(type, "cox") ~ "LFCM",
+                               str_detect(type, "norm") ~ "AFT",
+                               str_detect(type, "sieve") ~ "Sieve"))
+
+  # Combine 'n' and 'nS' into wider columns
+  data2 <- data1 %>%
+    filter(k == beta_type) %>%
+    pivot_wider(names_from = c(n, nS), values_from = value, names_sep = "_nS_")
+
+  gt_table <- data2 %>%
+    dplyr::select(-c(k, type)) %>%
+    gt(groupname_col = "family") %>%
+    tab_spanner(label = "N = 100", columns = starts_with("100_")) %>%
+    tab_spanner(label = "N = 200", columns = starts_with("200_")) %>%
+    tab_spanner(label = "N = 500", columns = starts_with("500_")) %>%
+    cols_label(ends_with("nS_50") ~ "nS = 50",
+               ends_with("nS_100") ~ "nS = 100",
+               ends_with("nS_500") ~ "nS = 500") %>%
+   tab_header(title = title, subtitle = subtitle) %>%
+   cols_align(align = "center", columns = everything()) %>%
+   fmt_number(columns = where(is.numeric), decimals = 3) %>%
+   opt_table_outline() %>%
+   opt_row_striping()
+
+  return(gt_table)
+}
+```
+
+### Averge C-index across 500 Simulations
+
+The predictive performance of our model is comparable to that of the functional Cox model, with only minimal difference.\
+Do we need to perform cross validation?\
+Functional form of beta(s) (In Erjia's paper, they considered constant, linear, and two nonlinear functions)
+
 ```{r}
 all_info <- data.frame()
 # Loop through all scenarios and iterations to extract 'info'
@@ -38,225 +80,358 @@ for (scenario in all_results) {
   }
 }
 
-df_summary <- all_info %>%
+# Calculate the average C-index across iterations
+table_cindex <- all_info %>%
   group_by(k, family, n, nS) %>%
   summarise(
-    mean_AUC_norm = round(mean(AUC_norm, na.rm = TRUE), 3),
-    mean_AUC_cox = round(mean(AUC_cox, na.rm = TRUE), 3),
-    mean_Brier_norm = round(mean(Brier_norm, na.rm = TRUE), 3),
-    mean_Brier_cox = round(mean(Brier_cox, na.rm = TRUE), 3),
-    .groups = "drop" # Prevents nested groupings in the result
+    AUC_norm = round(mean(AUC_norm, na.rm = TRUE), 3),
+    AUC_cox = round(mean(AUC_cox, na.rm = TRUE), 3),
+    .groups = "drop"
   )
-df_summary
+
+# Create summary table
+table_cindex_1 <- create_table(table_cindex, var = c("AUC_norm", "AUC_cox"), beta_type = 6,
+                               title = "Averge C-index across 500 Simulations",
+                               subtitle = "Beta type: simple")
+table_cindex_1
+table_cindex_2 <- create_table(table_cindex, var = c("AUC_norm", "AUC_cox"), beta_type = 8,
+                               title = "Averge C-index across 500 Simulations",
+                               subtitle = "Beta type: complex")
+table_cindex_2
+
 ```
 
-### Compare Average Computation Time
-```{r}
-# Initialize a dataframe to store all extracted values
-all_info <- data.frame(time_norm = numeric(),
-                       time_cox = numeric(),
-                       time_sieve = numeric())
+### Averge Brier score
 
-# Loop through all scenarios and iterations to extract 'info'
+The predictive performance of our model is better than functional Cox model when the true model is lognormal or loglogistic. When the true model is a Cox model, the functional Cox model performs better.
+
+```{r}
+# Calculate the average Brier Score across iterations
+table_Brier <- all_info %>%
+  group_by(k, family, n, nS) %>%
+  summarise(
+    Brier_norm = round(mean(Brier_norm, na.rm = TRUE), 3),
+    Brier_cox = round(mean(Brier_cox, na.rm = TRUE), 3),
+    .groups = "drop"
+  )
+
+# Create summary table
+table_Brier_1 <- create_table(table_Brier, var = c("Brier_norm", "Brier_cox"), beta_type = 6,
+                               title = "Averge Brier Score across 500 Simulations",
+                               subtitle = "Beta type: simple")
+table_Brier_1
+table_Brier_2 <- create_table(table_Brier, var = c("Brier_norm", "Brier_cox"), beta_type = 8,
+                               title = "Averge Brier Score across 500 Simulations",
+                               subtitle = "Beta type: complex")
+table_Brier_2
+```
+
+### Plot coefficient estimations + CI + true coefficient
+```{r}
+sub_coef <- data.frame()
+
+# Loop through all scenarios and iterations to extract 'coef'
+for (scenario in all_results) {
+  counter <- 0  # Initialize a counter
+
+  for (iteration in scenario) {
+    # Break the inner loop if 50 iterations for the current scenario are stored
+    if (counter >= 1) {
+      break
+    }
+
+    # Extract data for the current iteration
+    time <- seq(0, 1, length.out = iteration$info$nS)
+    tmp_data <- data.frame(scenario = iteration$info$scenario,
+                           iter = iteration$info$iter,
+                           family = iteration$info$family,
+                           n = iteration$info$n,
+                           nS = iteration$info$nS,
+                           k = iteration$info$k,
+                           time = time,
+                           # beta_type = iteration$info$beta_type,
+                           true_coef = iteration$coef$true_coef,
+                           est_coef_norm = iteration$coef$est_coef_norm,
+                           lb_coef_norm = iteration$coef$lb_coef_norm,
+                           ub_coef_norm = iteration$coef$ub_coef_norm,
+                           cma_lb_coef_norm = iteration$coef$cma_lb_coef_norm,
+                           cma_ub_coef_norm = iteration$coef$cma_ub_coef_norm)
+
+    # Append to all_coef
+    sub_coef <- rbind(sub_coef, tmp_data)
+
+    # Increment the counter
+    counter <- counter + 1
+  }
+}
+
+sub_coef_2 <- sub_coef %>%
+  filter(n == 500 & nS == 100 & family == "lognormal")
+
+# Ensure the required directory for saving plots exists
+output_dir <- "../Figures"
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir)
+}
+
+scenarios <- unique(sub_coef_2[, c("family", "n", "nS", "k")])
+family <- scenario$family
+n <- scenario$n
+nS <- scenario$nS
+k <- scenario$k
+
+# Create the plot
+p <- ggplot(data = sub_coef_2, aes(x = time)) +
+  geom_ribbon(aes(ymin = lb_coef_norm, ymax = ub_coef_norm, fill = "Pointwise CI"), alpha = 0.5) +
+  geom_ribbon(aes(ymin = cma_lb_coef_norm, ymax = cma_ub_coef_norm, fill = "CMA CI"), alpha = 0.3) +
+  geom_line(aes(y = est_coef_norm, color = "Estimated Coefficient"), size = 1) +
+  geom_line(aes(y = true_coef, color = "True Coefficient"), linetype = "dashed", size = 1) +
+  scale_color_manual(values = c("Estimated Coefficient" = "blue", "True Coefficient" = "red")) +
+  scale_fill_manual(values = c(
+    "Pointwise CI" = "lightblue",
+    "CMA CI" = "lightgreen"
+  )) +
+  labs(
+    x = "Time",
+    y = "Coefficient",
+    title = paste("family =",family, "n =", n, "nS =", nS, "k =", k),
+    color = NULL,
+    fill = NULL
+  ) +
+  theme_minimal()
+
+# Save the plot
+file_name <- paste0(output_dir, "/", family, "_", n, "_", nS, "_", k, ".png")
+ggsave(file_name, plot = p, width = 8, height = 6)
+```
+
+### First 20 coeffcient estimations vs. true coefficient
+```{r}
+# sub_coef <- data.frame() 
+# 
+# # Loop through all scenarios and iterations to extract 'coef'
+# for (scenario in all_results) {
+#   counter <- 0  # Initialize a counter
+#   
+#   for (iteration in scenario) {
+#     # Break the inner loop if 50 iterations for the current scenario are stored
+#     if (counter >= 20) {
+#       break
+#     }
+#     
+#     # Extract data for the current iteration
+#     time <- seq(0, 1, length.out = iteration$info$nS)
+#     tmp_data <- data.frame(scenario = iteration$info$scenario,
+#                            iter = iteration$info$iter,
+#                            family = iteration$info$family,
+#                            n = iteration$info$n,
+#                            nS = iteration$info$nS,
+#                            k = iteration$info$k,
+#                            time = time,
+#                            # beta_type = iteration$info$beta_type,
+#                            true_coef = iteration$coef$true_coef,
+#                            est_coef_norm = iteration$coef$est_coef_norm,
+#                            est_coef_cox = iteration$coef$est_coef_cox,
+#                            se_coef_norm = iteration$coef$se_coef_norm,
+#                            se_coef_cox = iteration$coef$se_coef_cox,
+#                            se_coef_sieve = iteration$coef$se_coef_sieve,
+#                            cp_coef_norm = iteration$coef$cp_coef_norm,
+#                            cp_coef_cox = iteration$coef$cp_coef_cox,
+#                            cp_cma_coef_norm = iteration$coef$cp_cma_coef_norm,
+#                            cp_cma_coef_cox = iteration$coef$cp_cma_coef_cox)
+# 
+#     # Append to all_coef
+#     sub_coef <- rbind(sub_coef, tmp_data)
+#     
+#     # Increment the counter
+#     counter <- counter + 1
+#   }
+# }
+# 
+# # Ensure the required directory for saving plots exists
+# output_dir <- "../Figures"
+# if (!dir.exists(output_dir)) {
+#   dir.create(output_dir)
+# }
+# 
+# # Loop through each unique scenario
+# scenarios <- unique(sub_coef[, c("family", "n", "nS", "k")])
+# for (i in 1:nrow(scenarios)) {
+#   # Extract the scenario information
+#   scenario <- scenarios[i, ]
+#   family <- scenario$family
+#   n <- scenario$n
+#   nS <- scenario$nS
+#   k <- scenario$k
+#   
+#   # Filter data for the current scenario
+#   scenario_data <- sub_coef %>%
+#     filter(family == !!family, n == !!n, nS == !!nS, k == !!k)
+#   
+#   scenario_data_long <- scenario_data %>%
+#     select(iter, family, n, nS, k, time, true_coef, est_coef_norm, est_coef_cox) %>%
+#     pivot_longer(cols = c(true_coef, est_coef_norm, est_coef_cox),
+#                  names_to = "coef_type",
+#                  values_to = "coef_value")
+#   
+#   # Create the plot
+#   p <- ggplot(data = scenario_data_long, aes(x = time, y = coef_value, color = coef_type, group = interaction(iter, coef_type))) +
+#     geom_line(size = 0.5) +
+#     #scale_color_manual(
+#     #  values = c("true_coef" = "red", "est_coef_norm" = "green", "est_coef_cox" = "blue"),
+#     #  labels = c("True Coef", "Estimated Coef (Norm)", "Estimated Coef (Cox)")
+#     #) +
+#     labs(title = paste("family =",family, "n =", n, "nS =", nS, "k =", k),
+#          x = "Time", y = "Coefficient",
+#          color = "Type") +
+#     theme_minimal()
+#   
+#   # Save the plot
+#   file_name <- paste0(output_dir, "/", family, "_", n, "_", nS, "_", k, ".png")
+#   ggsave(file_name, plot = p, width = 8, height = 6)
+# }
+```
+
+### MISE for Estimated Coefficient Functions Across Iterations
+```{r}
+all_coef <- data.frame() 
+
+# Loop through all scenarios and iterations to extract 'coef'
 for (scenario in all_results) {
   for (iteration in scenario) {
-    # Extract the 'info' dataframe
-    info_df <- iteration$info
     
-    # Append the values to the all_info dataframe
-    all_info <- rbind(all_info, info_df[, c("time_norm", "time_cox", "time_sieve")])
+    # Extract data for the current iteration
+    tmp_data <- data.frame(scenario = iteration$info$scenario,
+                           iter = iteration$info$iter,
+                           family = iteration$info$family,
+                           n = iteration$info$n,
+                           nS = iteration$info$nS,
+                           k = iteration$info$k,
+                           #time = time,
+                           # beta_type = iteration$info$beta_type,
+                           mise_coef_norm = mean(iteration$coef$se_coef_norm),
+                           mise_coef_cox = mean(iteration$coef$se_coef_cox),
+                           mise_coef_sieve = mean(iteration$coef$se_coef_sieve),
+                           cp_coef_norm = mean(iteration$coef$cover_coef_norm),
+                           cp_coef_cox = mean(iteration$coef$cover_coef_cox),
+                           cp_cma_coef_norm = all(iteration$coef$cover_cma_coef_norm),
+                           cp_cma_coef_cox = all(iteration$coef$cover_cma_coef_cox))
+
+    # Append to all_coef
+    all_coef <- rbind(all_coef, tmp_data)
   }
 }
 
-# Calculate the average of each variable
-averages <- colMeans(all_info)
+# Calculate the average MISE of coefficient function across iterations
+table_mise_coef <- all_coef %>%
+  group_by(k, family, n, nS) %>%
+  summarise(
+    mise_coef_norm = round(mean(mise_coef_norm, na.rm = TRUE), 3),
+    mise_coef_cox = round(mean(mise_coef_cox, na.rm = TRUE), 3),
+    mise_coef_sieve = round(mean(mise_coef_sieve, na.rm = TRUE), 3),
+    .groups = "drop"
+  ) 
 
-# Convert to a dataframe for plotting
-averages_df <- data.frame(
-  Model = c("AFT_lognormal", "Cox", "AFT_sieve"),
-  Time = as.numeric(averages)
-)
-
-# Create the bar plot
-ggplot(averages_df, aes(x = Model, y = Time, fill = Model)) +
-  geom_bar(stat = "identity", width = 0.5, show.legend = FALSE) +
-  labs(title = "Average Computation Time", x = "Model", y = "Time (seconds)") +
-  theme_minimal()
+# Create summary table
+table_mise_coef_1 <- create_table(table_mise_coef, var = c("mise_coef_norm", "mise_coef_cox", "mise_coef_sieve"), 
+                              beta_type = 6,
+                              title = "Averge MISE of Coefficient Function across 500 Simulations",
+                              subtitle = "Beta type: simple")
+table_mise_coef_1
+table_mise_coef_2 <- create_table(table_mise_coef, var = c("mise_coef_norm", "mise_coef_cox", "mise_coef_sieve"), 
+                              beta_type = 8,
+                              title = "Averge MISE of Coefficient Function across 500 Simulations",
+                               subtitle = "Beta type: complex")
+table_mise_coef_2
 ```
 
-### Average Coefficient Estimations Across Iterations
+### Average Coverage Probability of Pointwise CIs for Coefficient Function
 ```{r}
-# Initialize a dataframe to store extracted values
-plot_data <- data.frame(
-  n = integer(),
-  nS = integer(),
-  family = factor(),
-  index = numeric(),
-  true_coef = numeric(),
-  est_coef_norm = numeric(),
-  est_coef_cox = numeric(),
-  est_coef_sieve = numeric(),
-  se_coef_norm = numeric(),
-  se_coef_cox = numeric(),
-  se_coef_sieve = numeric(),
-  cover_coef_norm = numeric(),
-  cover_coef_cox = numeric(),
-  cover_cma_coef_norm = numeric(),
-  cover_cma_coef_cox = numeric()
-)
+# Calculate the average CP of Pointwise CIs for Coefficient Function
+table_cp_coef <- all_coef %>%
+  group_by(k, family, n, nS) %>%
+  summarise(
+    cp_coef_norm = round(mean(cp_coef_norm, na.rm = TRUE), 3),
+    cp_coef_cox = round(mean(cp_coef_cox, na.rm = TRUE), 3),
+    .groups = "drop"
+  ) 
 
-# Loop through all scenarios to extract coefficients
-for (scenario_idx in seq_along(all_results)) {
-  scenario <- all_results[[scenario_idx]]
-  for (iteration_idx in seq_along(scenario)) {
-    iteration <- scenario[[iteration_idx]]
-    
-    # Extract 'info' variables
-    n <- iteration$info$n
-    nS <- iteration$info$nS
-    family <- iteration$info$family
-    
-    # Extract 'coef' variables
-    coef_df <- iteration$coef
-    
-    # Add a normalized index for each coefficient (0 to 1)
-    temp_data <- data.frame(
-      n = n,
-      nS = nS,
-      family = family,
-      iteration = iteration_idx,
-      time = seq(0, 1, length.out = nS),
-      true_coef = coef_df$true_coef,
-      est_coef_norm = coef_df$est_coef_norm,
-      est_coef_cox = coef_df$est_coef_cox,
-      est_coef_sieve = coef_df$est_coef_sieve,
-      se_coef_norm = coef_df$se_coef_norm,
-      se_coef_cox = coef_df$se_coef_cox,
-      se_coef_sieve = coef_df$se_coef_sieve,
-      cover_coef_norm = coef_df$cover_coef_norm,
-      cover_coef_cox = coef_df$cover_coef_cox,
-      cover_cma_coef_norm = coef_df$cover_cma_coef_norm,
-      cover_cma_coef_cox = coef_df$cover_cma_coef_cox
-    )
-    
-    # Append to the main dataframe
-    plot_data <- rbind(plot_data, temp_data)
+# Create summary table
+table_cp_coef_1 <- create_table(table_cp_coef, var = c("cp_coef_norm", "cp_coef_cox"), 
+                              beta_type = 6,
+                              title = "Averge Coverage Probability of Pointwise CIs for Coefficient Function",
+                              subtitle = "Beta type: simple")
+table_cp_coef_1
+table_cp_coef_2 <- create_table(table_cp_coef, var = c("cp_coef_norm", "cp_coef_cox"), 
+                              beta_type = 8,
+                              title = "Averge Coverage Probability of Pointwise CIs for Coefficient Function",
+                               subtitle = "Beta type: complex")
+table_cp_coef_2
+```
+
+### Average Coverage Probability of CMA CIs for Coefficient Function
+```{r}
+# Calculate the average CP of CMA CIs for Coefficient Function
+table_cp_cma_coef <- all_coef %>%
+  group_by(k, family, n, nS) %>%
+  summarise(
+    cp_cma_coef_norm = round(mean(cp_cma_coef_norm, na.rm = TRUE), 3),
+    cp_cma_coef_cox = round(mean(cp_cma_coef_cox, na.rm = TRUE), 3),
+    .groups = "drop"
+  ) 
+
+# Create summary table
+table_cp_cma_coef_1 <- create_table(table_cp_cma_coef, var = c("cp_cma_coef_norm", "cp_cma_coef_cox"), 
+                              beta_type = 6,
+                              title = "Averge Coverage Probability of CMA CIs for Coefficient Function",
+                              subtitle = "Beta type: simple")
+table_cp_cma_coef_1
+table_cp_cma_coef_2 <- create_table(table_cp_cma_coef, var = c("cp_cma_coef_norm", "cp_cma_coef_cox"), 
+                              beta_type = 8,
+                              title = "Averge Coverage Probability of CMA CIs for Coefficient Function",
+                               subtitle = "Beta type: complex")
+table_cp_cma_coef_2
+```
+
+### MISE for Estimated Survival Functions
+```{r}
+all_surv <- data.frame() 
+
+# Loop through all scenarios and iterations to extract 'coef'
+for (scenario in all_results) {
+  for (iteration in scenario) {
+    # Extract data for the current iteration
+    tmp_data <- data.frame(scenario = iteration$info$scenario,
+                           iter = iteration$info$iter,
+                           family = iteration$info$family,
+                           n = iteration$info$n,
+                           nS = iteration$info$nS,
+                           k = iteration$info$k,
+                           mise_surv_norm = mean(iteration$surv$se_surv_norm),
+                           mise_surv_cox = mean(iteration$surv$se_surv_cox))
+
+    # Append to all_coef
+    all_surv <- rbind(all_surv, tmp_data)
   }
 }
 
-# Calculate the average for each time value across iterations
-plot_data_avg <- plot_data %>%
-  group_by(n, nS, family, time) %>%
+table_mise_surv <- all_surv %>%
+  group_by(k, family, n, nS) %>%
   summarise(
-    mean_true_coef = mean(true_coef, na.rm = TRUE),
-    mean_est_coef_norm = mean(est_coef_norm, na.rm = TRUE),
-    mean_est_coef_cox = mean(est_coef_cox, na.rm = TRUE) * -1,
-    mean_est_coef_sieve = mean(est_coef_sieve, na.rm = TRUE),
+    mise_surv_norm = round(mean(mise_surv_norm, na.rm = TRUE), 3),
+    mise_surv_cox = round(mean(mise_surv_cox, na.rm = TRUE), 3),
     .groups = "drop"
   )
 
-# Reshape the data into a long format for plotting
-plot_data_long <- plot_data_avg %>%
-  pivot_longer(
-    cols = c(mean_est_coef_norm, mean_est_coef_cox, mean_est_coef_sieve),
-    names_to = "coef_type",
-    values_to = "coef_value"
-  )
-
-# Generate plots for each 'n' value
-plots <- list()
-n_values <- unique(plot_data_avg$n)
-
-for (n_value in n_values) {
-  # Filter data for the current 'n' value
-  current_data <- filter(plot_data_long, n == n_value)
-  
-  # Create the plot
-  p <- ggplot(current_data, aes(x = time, y = coef_value, color = coef_type, group = coef_type)) +
-    geom_line(alpha = 0.8, size = 0.5) +
-    facet_wrap(~ nS + family, labeller = label_both, nrow = 3) +
-    geom_line(aes(y = mean_true_coef), color = "black", alpha = 0.5, size = 0.5) + # Add true coef line
-    scale_color_manual(
-      values = c("red", "blue", "green"),
-      labels = c("Est Coef Norm", "Est Coef Cox", "Est Coef Sieve")
-    ) +
-    labs(
-      title = paste("Average Coefficient Estimations for n =", n_value),
-      x = "Time (s)",
-      y = "Average Estimated Coefficient",
-      color = "Coefficient Type"
-    ) +
-    theme_minimal() +
-    theme(strip.text = element_text(size = 10))
-  
-  # Add to the list of plots
-  plots[[paste0("n_", n_value)]] <- p
-}
-
-# Print plots
-plots[["n_100"]]
-plots[["n_200"]]
-plots[["n_500"]]
-```
-
-### MISE for Coefficient Estimations Across Iterations
-```{r}
-# Calculate the average for each time value across iterations
-table_data_avg <- plot_data %>%
-  group_by(n, nS, family) %>%
-  summarise(
-    mise_norm = round(mean(se_coef_norm, na.rm = TRUE),3),
-    mise_cox = round(mean(se_coef_cox, na.rm = TRUE),3),
-    mise_sieve = round(mean(se_coef_sieve, na.rm = TRUE),3),
-    .groups = "drop"
-  )
-
-# Display the table using kable() for better formatting
-kable(table_data_avg, caption = "MISE for Coefficient Estimations Across Iterations") %>%
-  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
-                full_width = FALSE) %>%
-  column_spec(1:6, width = "2.5cm") %>% 
-  row_spec(0, bold = TRUE, font_size = 14) 
-```
-
-### Average Pointwise Coverage Percentage for Coefficient Functions
-```{r}
-# Calculate the average for each time value across iterations
-table_data_avg2 <- plot_data %>%
-  group_by(n, nS, family) %>%
-  summarise(
-    cp_norm = round(mean(cover_coef_norm, na.rm = TRUE),3),
-    cp_cox = round(mean(cover_coef_cox, na.rm = TRUE),3),
-    .groups = "drop"
-  )
-
-# Display the table using kable() for better formatting
-kable(table_data_avg2, caption = "Average Pointwise Coverage Percentage for Coefficient Functions Across Iterations") %>%
-  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
-                full_width = FALSE) %>%
-  column_spec(1:4, width = "2.5cm") %>% 
-  row_spec(0, bold = TRUE, font_size = 14) 
-```
-
-### Average Simultaneous Coverage Percentage for Coefficient Functions
-```{r}
-# Calculate the average for each time value across iterations
-table_data_avg3 <- plot_data %>%
-  group_by(n, nS, family, iteration) %>%
-  summarise(
-    cp_cma_norm = (mean(cover_cma_coef_norm) == 1),
-    cp_cma_cox = (mean(cover_cma_coef_cox) == 1),
-    .groups = "drop"
-  ) %>%
-  group_by(n, nS, family) %>%
-  summarise(mean_cp_cma_norm = round(mean(cp_cma_norm), 3),
-            mean_cp_cma_cox = round(mean(cp_cma_cox), 3),
-            .groups = "drop")
-
-# Display the table using kable() for better formatting
-kable(table_data_avg3, caption = "Average Simultaneous Coverage Percentage for Coefficient Functions Across Iterations") %>%
-  kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
-                full_width = FALSE) %>%
-  column_spec(1:4, width = "2.5cm") %>% 
-  row_spec(0, bold = TRUE, font_size = 14) 
+# Create summary table
+table_mise_surv_1 <- create_table(table_mise_surv, var = c("mise_surv_norm", "mise_surv_cox"), 
+                              beta_type = 6,
+                              title = "Averge MISE of Surivival Function across 500 Simulations",
+                              subtitle = "Beta type: simple")
+table_mise_surv_1
+table_mise_surv_2 <- create_table(table_mise_surv, var = c("mise_surv_norm", "mise_surv_cox"), 
+                              beta_type = 8,
+                              title = "Averge MISE of Survival Function across 500 Simulations",
+                              subtitle = "Beta type: complex")
+table_mise_surv_2
 ```

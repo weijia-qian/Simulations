@@ -15,7 +15,7 @@ simulate_Cox = function(data = dat_func,
   df_wide <- pivot_wider(subset(data, select = -seconds), names_from = frame, values_from = percent_change, 
                          names_prefix = "percent_change_")
   s <- unique(data$seconds)   # original grid
-  ss <- seq(0, range_s, length.out = nS)  # simulation grid
+  sgrid <- seq(0, range_s, length.out = nS)  # simulation grid
   if (nS <= length(s)) {
     # downsampling the original functional domain
     matrix_wide <- as.matrix(df_wide[, -(1:8)])[, seq(1, length(s), length.out = nS)] 
@@ -26,7 +26,7 @@ simulate_Cox = function(data = dat_func,
     })
     matrix_wide <- t(matrix_wide)
   }
-  fpca.results <- fpca.face(matrix_wide, argvals = ss, pve = 0.99)
+  fpca.results <- fpca.face(matrix_wide, argvals = sgrid, pve = 0.99)
   
   # re-scaled to appear on the scale of the original functions 
   Phi <- sqrt(nS) * fpca.results$efunctions
@@ -39,7 +39,7 @@ simulate_Cox = function(data = dat_func,
   
   # generate new curves based on FPCs and new scores
   sim_curves <- mu + sim_scores %*% t(Phi[, 1:npc])
-  sim_curves[,1] <- 0 # assign the initial value to zero
+  sim_curves[,1] <- 0 # asgridign the initial value to zero
   
   ### 2. Fit a linear functional Cox model on real data
   df_wide$X = I(matrix_wide)
@@ -48,7 +48,7 @@ simulate_Cox = function(data = dat_func,
   # matrix containing quadrature weights for all participants
   L <- kronecker(matrix(1, nrow(df_wide), 1), t(lvec))
   # matrix containing functional domain values
-  S <- kronecker(matrix(1, nrow(df_wide), 1), t(ss))
+  S <- kronecker(matrix(1, nrow(df_wide), 1), t(sgrid))
   df_wide$S <- I(S)
   # pointwise product of w_i(s) and the quadrature weights, "L"
   df_wide$X_L <- I(df_wide$X * L)
@@ -62,19 +62,18 @@ simulate_Cox = function(data = dat_func,
   # smooth while imposing non-decreasing shape constraints 
   H0_fit <- scam(H0_hat ~ s(t0, bs = "mpi") - 1) 
   # set the time grid to evaluate cumulative baseline hazard 
-  nt_pred <- 1000 # number of potential survival times 
-  tgrid_sim <- seq(0, tmax, len = nt_pred) 
+  tgrid <- seq(0, tmax, len = 1000) 
   # derive final estimates on the grid 
-  H0_prd <- pmax(0, predict(H0_fit, newdata = data.frame(t0 = tgrid_sim)))
+  H0_prd <- pmax(0, predict(H0_fit, newdata = data.frame(t0 = tgrid)))
 
   ### 4. Estimate the linear predictor 
   df_sim <- data.frame(X = I(sim_curves), 
                        L = I(matrix(1 / nS, ncol = nS, nrow = n)), 
-                       S = I(matrix(ss, ncol = nS, nrow = n, byrow = TRUE)))
+                       S = I(matrix(sgrid, ncol = nS, nrow = n, byrow = TRUE)))
   df_sim$X_L = I(df_sim$X * df_sim$L)
   if (beta_type == "simple"){
     beta <- function(s) 0.3 - (s - 0.2)^2
-    eta_i <- sim_curves %*% beta(ss) * (range_s / nS)
+    eta_i <- sim_curves %*% beta(sgrid) * (range_s / nS)
   } else {
     #beta <- function(s) -0.3 + cos(10 * s)
     eta_i <- predict(fit, newdata = df_sim, type = "terms")
@@ -88,8 +87,8 @@ simulate_Cox = function(data = dat_func,
   U <- runif(n) 
   Ti <- rep(NA, n) 
   for(i in 1:n){ 
-    if(all(Si[i,] > U[i])){Ti[i] <- max(tgrid_sim) + 1} 
-    else{Ti[i] <- tgrid_sim[min(which(Si[i,] < U[i]))]} 
+    if(all(Si[i,] > U[i])){Ti[i] <- max(tgrid) + 1} 
+    else{Ti[i] <- tgrid[min(which(Si[i,] < U[i]))]} 
   }
   summary(Ti)
 
@@ -118,12 +117,12 @@ simulate_Cox = function(data = dat_func,
   
   # save true coefficient functions
   if (beta_type == "simple"){
-    df_coef = data.frame(time = ss,
-                         beta1 = beta(ss)
+    df_coef = data.frame(time = sgrid,
+                         beta1 = beta(sgrid)
                          )
   } else {
-    df_coef = data.frame(time = ss,
-                         beta1 = as.numeric(predict(fit, newdata = data.frame(S = ss, X_L = 1), type = "terms"))
+    df_coef = data.frame(time = sgrid,
+                         beta1 = as.numeric(predict(fit, newdata = data.frame(S = sgrid, X_L = 1), type = "terms"))
                          )
   }
   
