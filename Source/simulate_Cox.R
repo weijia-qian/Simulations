@@ -90,7 +90,7 @@ simulate_Cox = function(data = dat_func,
     if(all(Si[i,] > U[i])){Ti[i] <- max(tgrid) + 1} 
     else{Ti[i] <- tgrid[min(which(Si[i,] < U[i]))]} 
   }
-  summary(Ti)
+  #summary(Ti)
 
   ### 7. Simulate censoring times from uniform (0, u)
   set.seed(seed)

@@ -9,18 +9,18 @@ cal_c <- function(marker, Stime, status){
     ## current time
     ti    <- utimes[ut]
     ## subjects who experienced an event at current time
-    inx_i <- which(Stime == ti & status==1)
+    inx_i <- which(Stime == ti & status == 1)
     ## subjects with observed times beyond event current time
     inx_j <- which(Stime > ti)
     ## number of "cases" and "controls" at time current time
     n_case_t    <- length(inx_i)
     n_control_t <- length(inx_j)
     for(i in seq_along(inx_i)){
-      num   <- num + sum( (marker[inx_j] > marker[inx_i[i]] ) ) + 0.5*sum(marker[inx_j] == marker[inx_i[i]])
+      num <- num + sum((marker[inx_j] > marker[inx_i[i]])) + 0.5 * sum(marker[inx_j] == marker[inx_i[i]])
     }
-    denom <- denom + n_case_t*n_control_t
+    denom <- denom + n_case_t * n_control_t
   }
-  1-num/denom
+  1 - num / denom
 }
 
 ### function "cal_stime()" returns the survival times estimates
@@ -39,7 +39,7 @@ cal_stime <- function(fit, data, tgrid = seq(0, 10, len = 1000), family = "cox.p
     S_i <- exp(-(exp(eta_i) %*% H0_prd))
   } else if (family == "lognormal"){
     lp <- predict(fit, data, type = "response")
-    scale <- fit$scale
+    scale <- as.numeric(gsub(".*\\(([^)]+)\\).*", "\\1", fit$family$family))
     S_i <- outer(lp, tgrid, function(lp_i, tgrid_j) pnorm((log(tgrid_j) - lp_i) / scale, lower.tail = FALSE))
   }
   return(S_i)

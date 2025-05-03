@@ -1,0 +1,102 @@
+---
+title: "Fit Penalized AFT Model"
+author: "Weijia Qian"
+date: '`r format(Sys.time(), "%Y-%m-%d")`'
+output:
+  html_document: 
+    code_folding: hide
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, repr.plot.width = 12, repr.plot.height = 8)
+library(here)
+library(MASS)
+library(refund)
+library(splines)
+library(survival)
+library(tidyverse)
+source(here("Source", "simulate_AFT.R"))
+source(here("Source", "fit_penalized_aft.R"))
+load(here("Source", "dat_func.Rdata"))
+```
+
+#### Beta type = simple
+```{r}
+# Simulate functional survival data
+family <- "lognormal"
+n <- 100   # number of subjects
+nS <- 100   # number of observations
+beta_type <- "complex"
+beta0_true <- 0.5
+b_true <- 0.1
+
+simdata <- simulate_AFT(family = family, n = n, nS =nS, beta_type = beta_type, beta_0 = beta0_true,
+                        b = b_true)
+simdata <- simulate_Cox(n = n, nS = nS, beta_type = beta_type)
+
+# Optimize lambda using GCV
+model <- "lognormal"
+lambda_grid <- exp(seq(log(1000), log(10000), length.out = 500))
+best_lambda <- optimize_lambda(Y, delta, X, data = simdata$data, family = model, lambda_grid)
+print(paste("Optimal lambda:", best_lambda))
+
+lambda_list <- c(best_lambda - 10, best_lambda, best_lambda + 10)
+#lambda_list <- c(best_lambda)
+for (lambda in lambda_list) {
+  # Fit the model
+  fit <- optimize_AFT(Y, delta, X, data = simdata$data, family = model, lambda = lambda, se = TRUE)
+
+  # Extract results
+  cat("True beta0 =", beta0_true, "Estimated beta0 =", round(fit$beta0_hat, 3), "\n")
+  cat("True b =", b_true, "Estimated b =", round(fit$b_hat, 3), "\n")
+  mise_beta1 <- mean((simdata$coefficients$beta1 - fit$beta1_hat)^2)
+  cat("MISE of beta1 =", round(mise_beta1, 5), "\n")
+
+  # Summary of coefficient function
+  df_coef <- data.frame(time = simdata$coefficients$time,             
+                        true_coef = simdata$coefficients$beta1,                      
+                        est_coef = fit$beta1_hat,
+                        lb_coef = fit$beta1_ci_lower,
+                        ub_coef = fit$beta1_ci_upper)
+
+  # Plot estimated vs. true coefficient function
+  myplot <- ggplot(data = df_coef, aes(x = time)) +
+    geom_ribbon(aes(ymin = lb_coef, ymax = ub_coef, fill = "Pointwise CI"), alpha = 0.5) +
+    geom_line(aes(y = est_coef, color = "Estimated Coefficient"), size = 1) +
+    geom_line(aes(y = true_coef, color = "True Coefficient"), linetype = "dashed", size = 1) +
+    scale_color_manual(values = c("Estimated Coefficient" = "blue", "True Coefficient" = "red")) +
+    scale_fill_manual(values = c(
+      "Pointwise CI" = "lightblue"
+    )) +
+    labs(
+      x = "Functional domain (s)",
+      y = expression(beta~"(s)"),
+      #title = paste("family =", family, "n =", n, "nS =", nS, "beta_type =", beta_type),
+      #subtitle = paste("model =", model, "lambda =", lambda),
+      color = NULL,
+      fill = NULL
+    ) +
+    theme_minimal()
+
+  print(myplot)
+}
+
+```
+
+
+```{r, eval=FALSE}
+df_summary <- data.frame(parameter = c(paste0("beta", 1:4), "b"),
+                         true = c(beta0_true, b_true),
+                         estimate = round(fit$par, 3),
+                         se = round(se, 3),
+                         CI = paste0("(", round(ci_lower, 3), ", ", round(ci_upper, 3), ")"))
+
+kable(df_summary) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), 
+                full_width = F, 
+                position = "center") %>%
+  column_spec(1, bold = TRUE) %>%
+  column_spec(2:5, width = "8em")
+```

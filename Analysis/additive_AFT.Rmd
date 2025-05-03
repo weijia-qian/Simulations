@@ -1,0 +1,239 @@
+---
+title: "Addictive AFT Model"
+author: "Weijia Qian"
+date: '`r format(Sys.time(), "%Y-%m-%d")`'
+output:
+  html_document: 
+    code_folding: hide
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, repr.plot.width = 12, repr.plot.height = 8)
+library(CCMHr)
+library(gt)
+library(here)
+library(kableExtra)
+library(MASS)
+library(mgcv)
+library(refund)
+library(scam)
+library(splines)
+library(survival)
+library(tidyverse)
+```
+
+
+### Simulate functional surface from prespecified F(s, x)
+1. $F(s,x)=-2x$ (beta_type = "const")\
+2. $F(s,x)=-xs$ (beta_type = "linear")\
+4. $F(s,x)=sin(-xs)$ (beta_type = "nonlinear")\
+
+```{r}
+load(here::here("Source", "dat_func.Rdata")) # load real data
+source(here::here("Source", "simulate_AFT.R"))
+source(here::here("Source", "simulate_AFT2.R"))
+source(here::here("Source", "calc_auc_brier.R"))
+simdata1 <- simulate_AFT2(n=100, beta_type = "const", u = 20, beta_0 = 0.5)
+simdata2 <- simulate_AFT2(n=100, beta_type = "linear", u = 2000, beta_0 = 0.5)
+simdata3 <- simulate_AFT2(n=100, beta_type = "nonlinear1", u = 20000, beta_0 = 0.5)
+summary(simdata3$data$t)
+mean(simdata3$data$delta)
+```
+
+### Fit additive functional AFT model
+#### True beta type: constant
+```{r}
+## derive true surface based on the formula of F(x, s)
+xind <- as.matrix(seq(-40, 10, len = 500), ncol = 1)
+sind <- as.matrix(seq(0, 1, len = 500), ncol = 1)
+real_coef <- matrix(rep(-0.1 * xind, each = 500), nrow = 500, ncol = 500)
+
+filled.contour(x = sind, y = xind, z = real_coef,
+               color.palette = topo.colors,
+               xlab = "Functional domain (s)", 
+               ylab = "Functional covariate (x)",
+               main = "True Surface: F(s, x) = -0.1x")
+
+fit1.norm <- gam(logY ~ ti(X, S, by = L, bs = c("cr", "cr"), k = c(20, 20), mc = c(TRUE, FALSE)), family = cnorm(), data = simdata1$data)
+
+df_pred <- expand.grid(X = xind, S = sind)
+df_pred$L = 1
+pred_smooth <- predict(fit1.norm, newdata = df_pred, type = "terms", terms = "ti(X,S):L")
+df_surface <- matrix(pred_smooth[,"ti(X,S):L"], ncol = sqrt(nrow(df_pred)), nrow = sqrt(nrow(df_pred)), byrow = TRUE)
+
+filled.contour(x = sind, y = xind, z = df_surface,
+               color.palette = topo.colors,
+               xlab = "Functional domain (s)", 
+               ylab = "Functional covariate (x)",
+               main = "Estimated Coefficient Surface F(s,x)")
+```
+
+
+```{r}
+par(mar = c(4.5, 4, 1, 1) + 0.1)
+vis.gam(fit1.norm, view = c("S", "X"), plot.type = "contour", color = "topo",
+        xaxt = "n", 
+        main = "Estimated Surface",
+        xlab = "Functional domain", ylab = "Value of the functional covariate")
+axis(side = 1, at = c(1, 100, 200, 300, 400)/400, labels = c("0","0.25","0.5","0.75","1"))
+```
+
+#### True beta type: linear
+```{r}
+## derive true surface based on the formula of F(x, s)
+real_coef <- t(-xind %*% t(sind))
+
+filled.contour(x = sind, y = xind, z = real_coef,
+               color.palette = function(n) topo.colors(n), 
+               levels = seq(-10, 40, length.out = 20),
+               xlab = "Functional domain (s)", 
+               ylab = "Functional covariate (x)",
+               main = "True Surface: F(s, x) = -x*s")
+
+fit2.norm <- gam(logY ~ ti(X, S, by = L, bs = c("cr", "cr"), k = c(30, 30), mc = c(TRUE, FALSE)), family = cnorm(), data = simdata2$data)
+
+pred_smooth <- predict(fit2.norm, newdata = df_pred, type = "terms", terms = "ti(X,S):L")
+df_surface <- matrix(pred_smooth[,"ti(X,S):L"], ncol = sqrt(nrow(df_pred)), nrow = sqrt(nrow(df_pred)), byrow = TRUE)
+filled.contour(x = sind, y = xind, z = df_surface,
+               color.palette = function(n) topo.colors(n), 
+               levels = seq(-23, 40, length.out = 20),
+               xlab = "Functional domain (s)", 
+               ylab = "Functional covariate (x)",
+               main = "Estimated Coefficient Surface F(s,x)")
+
+```
+
+#### True beta type: nonlinear1
+
+```{r}
+## derive true surface based on the formula of F(x, s)
+real_coef <- t((0.1*xind)^2 %*% t(sind))
+
+filled.contour(x = sind, y = xind, z = real_coef,
+               color.palette = topo.colors,
+               xlab = "S", 
+               ylab = "X",
+               main = "True Surface: F(x,s) = 0.01x^2*s")
+
+fit3.norm <- gam(logY ~ ti(X, S, by = L, bs = c("cr", "cr"), k = c(30, 30), mc = c(TRUE, FALSE)), family = cnorm(), data = simdata3$data)
+
+pred_smooth <- predict(fit3.norm, newdata = df_pred, type = "terms", terms = "ti(X,S):L")
+df_surface <- matrix(pred_smooth[,"ti(X,S):L"], ncol = sqrt(nrow(df_pred)), nrow = sqrt(nrow(df_pred)), byrow = TRUE)
+filled.contour(x = sind, y = xind, z = df_surface,
+               color.palette = topo.colors,
+               xlab = "S", 
+               ylab = "X",
+               main = "Estimated Coefficient Surface F(s,x)")
+```
+
+#### True beta type: nonlinear2
+
+```{r}
+## derive true surface based on the formula of F(x, s)
+real_coef <- t(sin(-xind %*% t(sind)))
+
+filled.contour(x = sind, y = xind, z = real_coef,
+               color.palette = topo.colors,
+               xlab = "Functional domain", 
+               ylab = "Value of the functional covariate",
+               main = "True Surface: F(x,s) = sin(-x*s)")
+
+fit4.norm <- gam(logY ~ ti(X, S, by = L, bs = c("cr", "cr"), k = c(50, 50), mc = c(TRUE, FALSE)), family = cnorm(), data = simdata4$data)
+par(mar = c(4.5, 4, 1, 1) + 0.1)
+vis.gam(fit4.norm, view = c("S", "X"), plot.type = "contour", color = "topo", 
+        xaxt = "n", 
+        main = "Estimated Surface",
+        xlab = "Functional domain", ylab = "Value of the functional covariate")
+axis(side = 1, at = c(1, 100, 200, 300, 400)/400, labels = c("0","0.25","0.5","0.75","1"))
+```
+
+### Calulate C-index and Brier score of addictive models
+```{r}
+# simulate test datasets
+simdata1_test <- simulate_AFT2(beta_type = "const", u = 20, beta_0 = 0.5, seed = 42)
+simdata2_test <- simulate_AFT2(beta_type = "linear", u = 2000, beta_0 = 0.5, seed = 42)
+simdata3_test <- simulate_AFT2(beta_type = "nonlinear2", u = 5, beta_0 = 0.5, seed = 42)
+
+train_data <- list(simdata1, simdata2, simdata3)
+test_data <- list(simdata1_test, simdata2_test, simdata3_test)
+fit_list <- list(fit1.norm, fit2.norm, fit3.norm)
+cindex_list <- list()
+brier_list <- list()
+
+for (i in seq_along(train_data)) {
+  # survival time and status
+  time_train <- train_data[[i]]$data$Y
+  event_train <- train_data[[i]]$data$delta
+  time_test <- test_data[[i]]$data$Y
+  event_test <- test_data[[i]]$data$delta
+
+  # get unique ordered survival times
+  ut_train <- unique(time_train[event_train == 1])
+  ut_train <- ut_train[order(ut_train)]
+  ut_test <- unique(time_test[event_test == 1])
+  ut_test <- ut_test[order(ut_test)]
+  
+  # derive the KM estimate of the censoring time
+  ut_train_censor <- unique(time_train[event_train == 0])
+  ut_train_censor <- ut_train_censor[order(ut_train_censor)]
+  ut_test_censor <- unique(time_test[event_test == 0])
+  ut_test_censor <- ut_test_censor[order(ut_test_censor)]
+  # get KM estimates of censoring time for train data
+  KM_train_censor <- unique(survfit(Surv(time_train, 1 - event_train) ~ 1)$surv)
+  # get KM estimates of censoring time for test data where test and training overlap
+  # impute linearly on the log scale for survival times which are not in the training dataset
+  KM_test_censor  <- rep(NA, length(ut_test_censor))
+  for(j in seq_along(ut_test_censor)){
+    # if test data survival time less than the minimum observed event time in the training dataset
+    # impute survival time on the linearly log scale
+    if(ut_test_censor[j] < min(ut_train_censor)){
+      KM_test_censor[j] <- exp(log(1) - (log(1) - log(KM_train_censor[1])) / (ut_train_censor[1]-0) * (ut_test_censor[1]-0))
+    }
+    # if test data survival time within the observed range of event times in the training dataset,
+    # either use the KM estimate (if the training time is in the test times), or impute linearly on the log scale
+    if(ut_test_censor[j] >= min(ut_train_censor) & ut_test_censor[j] < max(ut_train_censor)){
+      inx_l <- max(which(ut_train_censor <= ut_test_censor[j]))
+      inx_r <- min(which(ut_train_censor > ut_test_censor[j]))
+      st_l <- KM_train_censor[inx_l]
+      st_r <- KM_train_censor[inx_r]
+      t_l <- ut_train_censor[inx_l]
+      t_r <- ut_train_censor[inx_r]
+      KM_test_censor[j] <- exp(log(st_l) - (log(st_l) - log(st_r))/(t_r -t_l)  * (ut_test_censor[j] - t_l))
+    }
+    # if the test data survival time is beyond the observe range of event times in the training dataset,
+    # use the last observed survival probability
+    if(ut_test_censor[j] >= max(ut_train_censor)){
+      KM_test_censor[j] <- min(KM_train_censor)
+    }
+  }
+
+  # obtain linear predictors
+  eta <- predict(fit_list[[i]], test_data[[i]]$data, type = "response")
+  
+  # calculate c-index
+  cindex <- cal_c(marker = -eta, Stime = time_test, status = event_test)
+  cindex_list[[i]] <- cindex
+  
+  # calculate Brier score
+  tmax_test <- round(quantile(test_data[[i]]$data$t, 0.99))
+  tgrid_test <- seq(0, tmax_test, length.out = 1000)
+  S <- cal_stime(fit = fit_list[[i]], data = test_data[[i]]$data, tgrid = tgrid_test, family = 'lognormal')
+  brier <- cal_Brier(S, Stime = time_test, status = event_test, tgrid = tgrid_test)
+  brier_list[[i]] <- brier
+}
+
+# Create a dataframe for results
+results_df <- data.frame(
+  Constant = c(cindex_list[[1]], brier_list[[1]]),
+  Linear = c(cindex_list[[2]], brier_list[[2]]),
+  Nonlinear = c(cindex_list[[3]], brier_list[[3]])
+)
+rownames(results_df) <- c("C Index", "Brier Score")
+
+# Print the results table
+print(results_df)
+```
+
+

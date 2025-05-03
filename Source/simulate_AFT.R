@@ -1,25 +1,23 @@
 simulate_AFT = function(data = dat_func, 
-                        family = "loglogistic",
+                        family = "lognormal",
                         n = 500,
                         npc = 5,
                         tmax = 1,
                         nS = 401,
                         beta_type = "simple",
-                        #k = 6,
-                        #bs_coef = c(0, -1, -0.5, 0.25, 0.25, 0.25),
-                        beta_0 = log(62),
+                        beta_0 = 0.5,
                         b = 0.1,
-                        #u = 6000,
-                        seed = 916){
+                        u = 250,
+                        seed = 916,
+                        output = "wide"){
   
   if (beta_type == "simple") {
     k = 6
     bs_coef = c(0, -1, -0.5, 0.25, 0.25, 0.25)
-    u = 6000
   } else {
     k = 8
-    bs_coef = c(-1, 0.5, -0.7, -0.4, 0.8, -0.5, 0.9, -0.6)
-    u = 250
+    bs_coef = c(0, 0.4, 0.2, 0.2, 0.2, 0.6, 0.3, 0)
+    #bs_coef = c(-1, 0.5, -0.7, -0.4, 0.8, -0.5, 0.9, -0.6)
   }
   
   # FPCA on real data
@@ -81,7 +79,8 @@ simulate_AFT = function(data = dat_func,
   
   # simulate censoring times from uniform (0, u)
   set.seed(seed)
-  C <- runif(n, 40, u)
+  #C <- runif(n, 40, u)
+  C <- runif(n, 0, u)
   
   # obtain observed survival times (Y)
   Y <- pmin(t, C)
@@ -99,16 +98,26 @@ simulate_AFT = function(data = dat_func,
   S <- kronecker(matrix(1, n, 1), t(sgrid)) # matrix containing functional domain values
   
   # save simulated data
-  sim_data_wide = data.frame(ID = seq(1:n), 
-                             Y = Y,
-                             t = t,
-                             C = C,
-                             delta = delta,
-                             X = I(sim_curves),
-                             X_L = I(sim_curves * L),
-                             S = I(S),
-                             lp = lp,
-                             logY = I(logY))
+  if (output == "wide"){
+    sim_data = data.frame(ID = seq(1:n), 
+                               Y = Y,
+                               t = t,
+                               C = C,
+                               delta = delta,
+                               X = I(sim_curves),
+                               X_L = I(sim_curves * L),
+                               S = I(S),
+                               lp = lp,
+                               logY = I(logY))
+  } else if (output == "long"){
+    sim_data = data.frame(ID = rep(1:n, each = nS), 
+                               Y = rep(Y, each = nS),
+                               t = rep(t, each = nS),
+                               C = rep(C, each = nS),
+                               delta = rep(delta, each = nS),
+                               z = rep(z, each = nS),
+                               X = as.vector(t(sim_curves)))
+  }
   
   # save true coefficient functions
   df_coef = data.frame(time = sgrid,
@@ -116,6 +125,6 @@ simulate_AFT = function(data = dat_func,
                        beta1 = beta_1,
                        b = b)
   
-  return(list(data = sim_data_wide, k = k, bs_coef = bs_coef, coefficients = df_coef, family = family))
+  return(list(data = sim_data, k = k, bs_coef = bs_coef, coefficients = df_coef, family = family, beta_type = beta_type))
   
 }

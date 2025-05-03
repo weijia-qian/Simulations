@@ -1,0 +1,634 @@
+---
+title: "Real Data Analysis"
+author: "Weijia Qian"
+date: "2025-03-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+suppressPackageStartupMessages(library(fda))
+suppressPackageStartupMessages(library(here))
+suppressPackageStartupMessages(library(MASS))
+suppressPackageStartupMessages(library(mgcv))
+suppressPackageStartupMessages(library(refund))
+suppressPackageStartupMessages(library(caret))
+suppressPackageStartupMessages(library(scam))
+suppressPackageStartupMessages(library(splines))
+suppressPackageStartupMessages(library(survival))
+suppressPackageStartupMessages(library(tidyverse))
+library(corrplot)
+library(glmnet)
+
+source(here("Source", "calc_auc_brier.R"))
+source(here("Source", "fit_penalized_aft.R"))
+source(here("Source", "utils_summary.R"))
+# load real data
+df_func <- readRDS(here("Data", "Phase3_Pupillometer_pctChg.rds")) 
+df_scalar <- readRDS(here("Data", "ccds2_scalars.rds")) 
+df <- df_scalar %>%
+  distinct(ptid, .keep_all = TRUE) %>%
+  select(ptid, age_in_years, bmi) %>%
+  right_join(df_func, by = "ptid")
+  
+# correlation plot of variables
+corr <- cor(df_scalar[sapply(df_scalar, is.numeric)])
+corrplot(corr, type = "upper", title = "Pearson Correlations between Variables")
+```
+
+```{r data cleaning}
+# check the number of unique values for each variable
+sapply(df, n_distinct)
+# create user/non-user variable
+df$is_user <- ifelse(df$use_group == "No Use", 0, 1)
+# set censoring time to 8h
+df$time_since_use <- ifelse(df$is_user == 1, df$mins_since_consump, NA)
+
+# transpose to wide format
+df_wide <- df %>%
+  select(ptid, mtm, eye, trial_id, pupil_sm_pctChg, is_user, time_since_use, age_in_years, bmi) %>%
+  group_by(trial_id) %>%
+  mutate(frame = row_number()) %>%
+  ungroup() %>%
+  pivot_wider(names_from = frame, values_from = pupil_sm_pctChg, names_prefix = "pct_chg_")
+
+# separate datasets for post1 & post2
+df_post1_r <- df_wide[df_wide$mtm == "1_Post1" & df_wide$eye == "Right", ]
+df_post1_r <- df_post1_r %>% select(-pct_chg_120) # data issue in the last frame
+#df_post2_r <- df_wide[df_wide$mtm == "2_Post2" & df_wide$eye == "Right", ]
+#df_post1_l <- df_wide[df_wide$mtm == "1_Post1" & df_wide$eye == "Left", ]
+# setdiff(df_post2_r$ptid, df_post1_r$ptid)
+# cat("post1: time since use\n")
+# summary(df_post1_r$time_since_use)
+# cat("post2: time since use\n")
+# summary(df_post2_r$time_since_use)
+
+# time grid
+sgrid <- unique(df$time)[-120] # remove the last frame
+mean(df_post1_r$pct_chg_119)
+#plot(df_post1_r$pct_chg_120, xlab= "Subject")
+```
+
+
+```{r}
+age_mean_user <- mean(df_post1_r[df_post1_r$is_user == 1,]$age_in_years, na.rm = TRUE)
+age_mean_nonuser <- mean(df_post1_r[df_post1_r$is_user == 0,]$age_in_years, na.rm = TRUE)
+bmi_mean_user <- median(df_post1_r[df_post1_r$is_user == 1,]$bmi, na.rm = TRUE)
+bmi_mean_nonuser <- median(df_post1_r[df_post1_r$is_user == 0,]$bmi, na.rm = TRUE)
+pupil_means_user <- t(as.matrix(colMeans(df_post1_r[df_post1_r$is_user == 1, -c(1:8)])[-120]))
+pupil_means_nonuser <- t(as.matrix(colMeans(df_post1_r[df_post1_r$is_user == 0, -c(1:8)])[-120]))
+```
+
+```{r}
+fit_mgcv <- function(data, family, sgrid, bs = "ps", k = 30){
+  n <- nrow(data)
+  nS <- length(sgrid)
+
+  # set up the exposure & response
+  X <- as.matrix(data[, grep("^pct_chg_", colnames(data))])
+  delta <- data$is_user
+  Y <- data$time_since_use
+  logY <- cbind(log(Y), log(Y))
+  logY[delta == 0, 2] <- Inf # right censoring
+  
+  # set up data structure for mgcv fitting
+  lvec <- matrix(1 / nS, nS, 1) # quadrature weights for Riemann integration
+  L <- kronecker(matrix(1, n, 1), t(lvec)) # matrix containing quadrature weights for all participants
+  S <- kronecker(matrix(1, n, 1), t(sgrid)) # matrix containing functional domain values
+  
+  # data for modelling
+  data2 <- data.frame(Y = Y,
+                      delta = delta,
+                      X = I(X),
+                      L = I(L),
+                      X_L = I(X * L),
+                      S = I(S),
+                      logY = I(logY),
+                      age_in_years = data$age_in_years,
+                      bmi = data$bmi)
+  
+  # fit functional AFT model using mgcv
+  tgrid <- seq(0, 125, len = 100) 
+  #df_surv = data2
+  L <- kronecker(matrix(1, 1, 1), t(lvec))
+  S <- kronecker(matrix(1, 1, 1), t(sgrid))
+  df_surv_user <- data.frame(X = I(pupil_means_user),
+                      L = I(L),
+                      X_L = I(pupil_means_user * L),
+                      S = I(S),
+                      #logY = I(logY),
+                      age_in_years = age_mean_user,
+                      bmi = bmi_mean_user)
+  df_surv_nonuser <- data.frame(X = I(pupil_means_nonuser),
+                      L = I(L),
+                      X_L = I(pupil_means_nonuser * L),
+                      S = I(S),
+                      #logY = I(logY),
+                      age_in_years = age_mean_nonuser,
+                      bmi = bmi_mean_nonuser)
+
+  if (family == "LAFT") {
+    fit <- gam(logY ~ age_in_years + bmi + s(S, by = X_L, bs = bs, k = k), data = data2, family = cnorm)
+    surv_user <- cal_stime(fit = fit, data = df_surv_user, tgrid = tgrid, family = 'lognormal')
+    surv_nonuser <- cal_stime(fit = fit, data = df_surv_nonuser, tgrid = tgrid, family = 'lognormal')
+  } else if (family == "LFCM") {
+    fit <- gam(Y ~ age_in_years + bmi + s(S, by = X_L, bs = bs, k = k), weights = delta, data = data2, family = cox.ph)
+    surv_user <- cal_stime(fit = fit, data = df_surv_user, tgrid = tgrid, family = 'cox.ph')
+    surv_nonuser <- cal_stime(fit = fit, data = df_surv_nonuser, tgrid = tgrid, family = 'cox.ph')
+  } else if (family == "AAFT"){
+    fit <- gam(logY ~ age_in_years + bmi + ti(X, S, by = L, bs = c("cr", "cr"), k = c(20, 20), mc = c(TRUE, FALSE)), data = data2, family = cnorm)
+    surv_user <- cal_stime(fit = fit, data = df_surv_user, tgrid = tgrid, family = 'lognormal')
+    surv_nonuser <- cal_stime(fit = fit, data = df_surv_nonuser, tgrid = tgrid, family = 'lognormal')
+  } else if (family == "AFCM") {
+    fit <- gam(Y ~ age_in_years + bmi + ti(X, S, by = L, bs = c("cr", "cr"), k = c(20, 20), mc = c(TRUE, FALSE)), weights = delta, data = data2, family = cox.ph)
+    surv_user <- cal_stime(fit = fit, data = df_surv_user, tgrid = tgrid, family = 'cox.ph')
+    surv_nonuser <- cal_stime(fit = fit, data = df_surv_nonuser, tgrid = tgrid, family = 'cox.ph')
+  }
+  
+  return(list(fit, surv_user, surv_nonuser))
+}
+```
+
+```{r, linear models}
+# linear functional log-normal AFT model
+fit1.laft <- fit_mgcv(data = df_post1_r, family = "LAFT", sgrid = sgrid)
+#fit2.laft <- fit_mgcv(data = df_post2_r, family = "LAFT", sgrid = sgrid)
+summary(fit1.laft [[1]])
+#summary(fit2.laft[[1]])
+
+# linear functional Cox model
+fit1.lfcm <- fit_mgcv(data = df_post1_r, family = "LFCM", sgrid = sgrid)
+#fit2.lfcm <- fit_mgcv(data = df_post2_r, family = "LFCM", sgrid = sgrid)
+summary(fit1.lfcm[[1]])
+#summary(fit2.lfcm)
+```
+
+
+```{r, esimtated coefficient function}
+# estimated coefficient function
+df_pred <- data.frame(S = sgrid, X_L = 1, age_in_years = age_mean, bmi = bmi_mean)
+coef.est.norm <- predict(fit1.laft[[1]], newdata = df_pred, type = "terms", se.fit = TRUE)
+coef.est.cox <- predict(fit1.lfcm[[1]], newdata = df_pred, type = "terms", se.fit = TRUE)
+
+cma.coef.norm <- get_CMA(fit1.laft[[1]])
+cma.coef.cox <- get_CMA(fit1.lfcm[[1]])
+
+df_coef <- data.frame(time = sgrid,
+                      est_coef_norm = as.numeric(coef.est.norm[[1]][, "s(S):X_L"]),  # estimated coefficient function
+                      lb_coef_norm = as.numeric(coef.est.norm[[1]][, "s(S):X_L"] - qnorm(0.975) * coef.est.norm[[2]][, "s(S):X_L"]), # pointwise CI lower bound
+                      ub_coef_norm = as.numeric(coef.est.norm[[1]][, "s(S):X_L"] + qnorm(0.975) * coef.est.norm[[2]][, "s(S):X_L"]), # pointwise CI upper bound
+                      cma_lb_coef_norm = as.numeric(cma.coef.norm[[1]]), # CMA CI lower bound
+                      cma_ub_coef_norm = as.numeric(cma.coef.norm[[2]]), # CMA CI upper bound
+                      est_coef_cox = as.numeric(coef.est.cox[[1]][, "s(S):X_L"]), 
+                      lb_coef_cox = as.numeric(coef.est.cox[[1]][, "s(S):X_L"] - qnorm(0.975) * coef.est.cox[[2]][, "s(S):X_L"]), 
+                      ub_coef_cox = as.numeric(coef.est.cox[[1]][, "s(S):X_L"] + qnorm(0.975) * coef.est.cox[[2]][, "s(S):X_L"]),
+                      cma_lb_coef_cox = as.numeric(cma.coef.cox[[1]]),
+                      cma_ub_coef_cox = as.numeric(cma.coef.cox[[2]])
+                      )
+
+ggplot(data = df_coef, aes(x = time)) +
+  geom_ribbon(aes(ymin = lb_coef_norm, ymax = ub_coef_norm, fill = "Pointwise CI"), alpha = 0.5) +
+  #geom_ribbon(aes(ymin = cma_lb_coef_norm, ymax = cma_ub_coef_norm, fill = "CMA CI"), alpha = 0.3) +
+  geom_line(aes(y = est_coef_norm, color = "Estimated Coefficient"), size = 1) +
+  scale_color_manual(values = c("Estimated Coefficient" = "blue")) +
+  scale_fill_manual(values = c(
+    "Pointwise CI" = "lightblue"
+ #   "CMA CI" = "lightgreen"
+  )) +
+  labs(
+    x = "Seconds since light stimulus",
+    y = expression(beta~"(s)"),
+    title = "Estimated coefficient function",
+    #subtitle = "post2 assessment",
+    color = NULL,
+    fill = NULL
+  ) +
+  theme_minimal()
+  theme(aspect.ratio = 1.5)
+
+ggplot(data = df_coef, aes(x = time)) +
+  geom_ribbon(aes(ymin = lb_coef_cox, ymax = ub_coef_cox, fill = "Pointwise CI"), alpha = 0.5) +
+  geom_ribbon(aes(ymin = cma_lb_coef_cox, ymax = cma_ub_coef_cox, fill = "CMA CI"), alpha = 0.3) +
+  geom_line(aes(y = est_coef_cox, color = "Estimated Coefficient"), size = 1) +
+  scale_color_manual(values = c("Estimated Coefficient" = "blue")) +
+  scale_fill_manual(values = c(
+    "Pointwise CI" = "lightblue",
+    "CMA CI" = "lightgreen"
+  )) +
+  labs(
+    x = "Seconds since light stimulus",
+    y = expression(beta~"(s)"),
+    #title = "lognormal AFT model using mgcv",
+    #subtitle = "post2 assessment",
+    color = NULL,
+    fill = NULL
+  ) +
+  theme_minimal() +
+  theme(aspect.ratio = 1.5)
+
+ggplot(data = df_coef, aes(x = time)) +
+  geom_ribbon(aes(ymin = lb_coef_norm, ymax = ub_coef_norm, fill = "AFT CI"), alpha = 0.5) +
+  #geom_ribbon(aes(ymin = cma_lb_coef_cox, ymax = cma_ub_coef_cox, fill = "CMA CI"), alpha = 0.3) +
+  geom_line(aes(y = est_coef_norm, color = "AFT"), size = 1) +
+  geom_ribbon(aes(ymin = lb_coef_cox, ymax = ub_coef_cox, fill = "LFCM CI"), alpha = 0.5) +
+  #geom_ribbon(aes(ymin = cma_lb_coef_cox, ymax = cma_ub_coef_cox, fill = "CMA CI"), alpha = 0.3) +
+  geom_line(aes(y = est_coef_cox, color = "LFCM"), size = 1) +
+  scale_color_manual(values = c("AFT" = "#F8766D", "LFCM" = "#00BFC4")) +
+  scale_fill_manual(values = c(
+    "AFT CI" = "#FDC3B2",
+    "LFCM CI" = "#B3EAF0"
+  )) +
+  labs(
+    x = "Seconds since light stimulus (s)",
+    y = expression(beta~"(s)"),
+    #title = "lognormal AFT model using mgcv",
+    #subtitle = "post2 assessment",
+    color = NULL,
+    fill = NULL
+  ) +
+  theme_minimal()
+```
+
+
+```{r, additive models}
+# additive lognormal AFT model
+fit1.aaft <- fit_mgcv(data = df_post1_r, family = "AAFT", sgrid = sgrid)
+summary(fit1.aaft[[1]])
+# AFCM
+fit1.afcm <- fit_mgcv(data = df_post1_r, family = "AFCM", sgrid = sgrid)
+summary(fit1.afcm[[1]])
+
+vis.gam(fit1.aaft[[1]], view = c("S", "X"), plot.type = "contour", color = "topo", n.grid = 100,
+        xaxt = "n", 
+        main = "Estimated Surface F(s,x)",
+        xlab = "Senconds since light stimulus (s)", ylab = "Percent change in pupil size (x)")
+axis(side = 1, at = c(0, 1, 2, 3, 4), labels = c("0","1","2","3","4"))
+
+xgrid <- as.matrix(seq(-80, 20, len = 119), ncol = 1)
+df_pred <- expand.grid(X = xgrid, S = sgrid)
+df_pred$L = 1
+df_pred$age_in_years = age_mean
+df_pred$bmi = bmi_mean
+pred_smooth <- predict(fit1.aaft[[1]], newdata = df_pred, type = "terms", terms = "ti(X,S):L", se = TRUE)
+pred_smooth$lb = pred_smooth$fit - qnorm(0.975) * pred_smooth$se.fit
+pred_smooth$ub = pred_smooth$fit + qnorm(0.975) * pred_smooth$se.fit
+pred_smooth$sig = !(pred_smooth$lb < 0 & pred_smooth$ub > 0)
+pred_smooth$fit_masked = ifelse(pred_smooth$sig == TRUE, pred_smooth$fit, NA)
+df_surface <- matrix(pred_smooth$fit, ncol = sqrt(nrow(df_pred)), nrow = sqrt(nrow(df_pred)), byrow = TRUE)
+df_surface_masked <- matrix(pred_smooth$fit_masked, ncol = sqrt(nrow(df_pred)), nrow = sqrt(nrow(df_pred)), byrow = TRUE)
+zlim = c(min(df_surface), max(df_surface))
+filled.contour(x = sgrid, y = xgrid, z = df_surface,
+               zlim = zlim,
+               color.palette = topo.colors,
+               xlab = "Senconds since light stimulus (s)", 
+               ylab = "Percent change in pupil size (x)",
+               main = "Estimated Coefficient Surface F(s,x)")
+filled.contour(x = sgrid, y = xgrid, z = df_surface_masked,
+               zlim = zlim,
+               color.palette = topo.colors,
+               xlab = "Senconds since light stimulus (s)", 
+               ylab = "Percent change in pupil size (x)",
+               main = "Estimated Coefficient Surface F(s,x) with Significance")
+```
+
+```{r, CDF}
+### CDF
+cdf_laft <- 1 - fit1.laft[[2]]
+cdf_aaft <- 1 - fit1.aaft[[2]]
+cdf_lfcm <- 1 - fit1.lfcm[[2]]
+cdf_afcm <- 1 - fit1.afcm[[2]]
+
+tgrid <- seq(0, 125, len = 100) 
+for (i in 1) {
+  plot_surv <- data.frame(time = tgrid,
+                          cdf_laft = cdf_laft[i, ],
+                          cdf_aaft = cdf_aaft[i, ],
+                          cdf_lfcm = cdf_lfcm[i, ],
+                          cdf_afcm = cdf_afcm[i, ])
+  
+  p <- ggplot(data = plot_surv, aes(x = time)) +
+    geom_line(aes(y = cdf_laft, color = "linear AFT"), size = 1) +
+    geom_line(aes(y = cdf_aaft, color = "additive AFT", linetype = "dotted"), size = 1, alpha = 0.5) +
+    geom_line(aes(y = cdf_lfcm, color = "LFCM"), size = 1) +
+    geom_line(aes(y = cdf_afcm, color = "AFCM", linetype = "dotted"), size = 1, alpha = 0.5) +
+    scale_color_manual(values = c("linear AFT" = "#E41A1C", 
+                                  "additive AFT" = "#377EB8", 
+                                  "LFCM" = "#4DAF4A", 
+                                  "AFCM" = "#984EA3")) +
+    labs(
+      x = "t (minutes)",
+      y = expression("P(T"<="t)"),
+      title = "Estimated CDF for An Average Cannabis User",
+      color = NULL
+      #subtitle = "age = 31, bmi = 25.4"
+    ) +
+    #xlim(0, 125) +
+    ylim(0, 0.8) +
+    theme_minimal()
+    #theme(aspect.ratio = 1, legend.position="bottom")
+  
+  print(p)
+}
+
+df_plot <- data.frame(s = sgrid,
+                      X = as.numeric(pupil_means))
+ggplot(data = df_plot) +
+  geom_point(aes(x = s, y = X)) +
+  labs(x = "Seconds since light stimulus",
+      y = "Percent change in pupil size (x)",
+      title = "Average Pupil Light Response Curve")+
+  theme_minimal()
+```
+
+```{r, hazard function}
+### Define the hazard function
+hazard_function <- function(t, lambda, alpha) {
+  return((lambda*alpha*(lambda*t)^(alpha-1))/(1+(lambda*t)^alpha))
+}
+
+t_values <- seq(0, 125, length.out = 200)
+
+# AFT model
+lp <- predict(fit1.laft[[1]], type = "link")
+lambda_values <- round(1/exp(lp), 4)[1:10]  # Varying lambda values
+b_values <- as.numeric(gsub(".*\\(([^)]+)\\).*", "\\1", fit1.laft[[1]]$family$family))    # Varying b values
+data_list <- list()
+# Loop over values of lambda and b to populate data
+for (i in seq_along(lambda_values)) {
+  for (b in b_values) {
+    alpha = 1/b
+    h_values <- hazard_function(tgrid, lambda_values[i], alpha)
+    temp_data <- data.frame(
+      subject = i,
+      t = tgrid,
+      hazard = h_values,
+      b = as.factor(b), 
+      lambda = as.factor(lambda_values[i])
+    )
+    data_list[[length(data_list) + 1]] <- temp_data
+  }
+}
+final_data <- do.call(rbind, data_list)
+
+# Plot the hazard function
+ggplot(final_data, aes(x = t, y = hazard, color = as.factor(subject))) +
+  geom_line() +
+  labs(x = "Time", y = "Estimated Hazard", color = "Subject",
+       title = "Estimated Hazard Functions for First 6 Subjects",
+       subtitle = "Linear Functional AFT Model (b = 1.267)") +
+  theme_minimal()
+
+# Cox model
+lp <- predict(fit1.lfcm[[1]], type = "link")
+fit <- fit1.lfcm[[1]]
+t0 <- rev(fit$family$data$tr) # observed event times
+H0_hat <- rev(fit$family$data$h) # Breslow estimator of the cumulative hazard function
+H0_fit <- scam(H0_hat ~ s(t0, bs = "mpi") - 1) # smooth while imposing non-decreasing shape constraints
+# evaluate smoothed H0 on fine grid
+H0_prd <- pmax(0, predict(H0_fit, newdata = data.frame(t0 = tgrid)))
+# approximate the baseline hazard function from cumulative hazard
+h0 <- c(H0_prd[1], diff(H0_prd))  # h0(t) = dH0(t)/dt
+hazard_est <- exp(lp) %o% h0 
+  
+  # Prepare data for ggplot
+hazard_df <- as.data.frame(t(hazard_est))
+hazard_df$time <- tgrid  # Add time points
+hazard_df <- pivot_longer(hazard_df, cols = -time, names_to = "subject", values_to = "hazard")
+
+# Plot
+ggplot(hazard_df, aes(x = time, y = hazard, color = subject)) +
+  geom_line() +
+  labs(x = "Time", y = "Estimated Hazard",
+       title = "Estimated Hazard Functions for First 6 Subjects",
+       subtitle = "LFCM") +
+  theme_minimal()
+
+# Combined plot
+ggplot(hazard_df) +
+  geom_line(aes(x = time, y = hazard, color = "LFCM")) +
+  geom_line(data = final_data, aes(x = t, y = hazard, color = "Linear AFT")) +
+  scale_color_manual(name = "Model",
+                     values = c("LFCM" = "blue", "Linear AFT" = "red")) +
+  labs(x = "t (minutes)", y = "Estimated Hazard",
+       title = "Estimated Hazard Function for An Average Individual",
+       subtitle = "age = 31, bmi = 25.4") +
+  theme_minimal()
+```
+
+```{r, functional logstic regression}
+library(tidyfun)
+df_post1_r$X_mat <- as.matrix(df_post1_r[, grep("^pct_chg_", colnames(df_post1_r))])
+
+fit1.logistic = pfr(is_user ~ age_in_years + bmi + lf(X_mat, argvals = sgrid), 
+                    family = binomial(), method = "REML", data = df_post1_r)
+summary(fit1.logistic)
+
+coef_df = 
+  coef(fit1.logistic) %>% 
+  rename(estimate = value) %>% 
+  mutate(
+    method = "pfr_adj",
+    ub = estimate + 1.96 * se,
+    lb = estimate - 1.96 * se) %>% 
+  tf_nest(.id = method, .arg = X_mat.argvals)
+
+coef_df %>% 
+  ggplot(aes(y = estimate)) + 
+  geom_spaghetti(alpha = 1, linewidth = 1.2) +
+  geom_errorband(aes(ymax = ub, ymin = lb)) +
+  labs(x = "Seconds since light stimulus (s)", 
+       y = expression(beta~"(s)"),
+       title = "Estimated coefficient function") +
+  theme_minimal()
+
+df_pred <- predict(fit1.logistic, type = "response")
+
+df_plot <- data.frame(time = sgrid,
+                      pupil_means_nonuser = as.numeric(pupil_means_nonuser),
+                      pupil_means_user = as.numeric(pupil_means_user))
+
+ggplot(data = df_plot, mapping = aes(x = time)) +
+  geom_line(aes(y = pupil_means_user, color = "User"), linewidth = 1) +
+  geom_line(aes(y = pupil_means_nonuser, color = "Nonuser"), linewidth = 1) +
+  scale_color_manual(values = c("User" = "red", "Nonuser" = "blue")) +
+  labs(x = "Seconds since light stimulus (s)", 
+       y = expression(X~"(s)"),
+       title = "Average pupil light response curve",
+       color = NULL) +
+  theme_minimal() +
+  theme(legend.position = c(0.9, 0.9))
+```
+
+```{r, Brier score}
+### cross-validated Brier score
+# cross validated c-index and Brier's score for each model
+## introduce variables in the cross validation
+set.seed(624) 
+n_folds <- 10 # number of folds
+### variables that store the c-index and Brier's score in each calculation
+cindex_laft <- cindex_aaft <- cindex_lfcm <- cindex_afcm <- rep(0, n_folds)
+Brier_laft <- Brier_aaft <- Brier_lfcm <- Brier_afcm <- Brier_logistic <- rep(0, n_folds)
+### use "createFolds" function from "caret" package to divide real data into n_folds folds
+fold <- createFolds(df_post1_r$time_since_use, k = n_folds, list = FALSE)
+
+## run cross validation
+for(k in 1:n_folds){
+    ## split train and test data
+    train_data <- df_post1_r[-which(fold == k),]
+    test_data <- df_post1_r[which(fold == k),]
+    
+    train_data$X_mat <- as.matrix(train_data[, grep("^pct_chg_", colnames(train_data))])
+    test_data$X_mat <- as.matrix(test_data[, grep("^pct_chg_", colnames(test_data))])
+    
+    # preprocess the test_data
+    n <- nrow(test_data)
+    nS <- length(sgrid)
+
+    # set up the exposure & response
+    X <- as.matrix(test_data[, grep("^pct_chg_", colnames(test_data))])
+    delta <- test_data$is_user
+    Y <- test_data$time_since_use
+    logY <- cbind(log(Y), log(Y))
+    logY[delta == 0, 2] <- Inf # right censoring
+  
+    # set up data structure for mgcv fitting
+    lvec <- matrix(1 / nS, nS, 1) # quadrature weights for Riemann integration
+    L <- kronecker(matrix(1, n, 1), t(lvec)) # matrix containing quadrature weights for all participants
+    S <- kronecker(matrix(1, n, 1), t(sgrid)) # matrix containing functional domain values
+  
+    # data for modelling
+    test_data2 <- data.frame(Y = Y,
+                      delta = delta,
+                      X = I(X),
+                      L = I(L),
+                      X_L = I(X * L),
+                      S = I(S),
+                      logY = I(logY),
+                      age_in_years = test_data$age_in_years,
+                      bmi = test_data$bmi)
+    
+    ## survival time and status
+    time_test   <- test_data$time_since_use
+    event_test <- test_data$is_user
+    time_train   <- train_data$time_since_use
+    event_train <- train_data$is_user
+    
+    ## get unique ordered survival times
+    ut_train <- unique(time_train[event_train == 1])
+    ut_train <- ut_train[order(ut_train)]
+    ut_test <- unique(time_test[event_test == 1])
+    ut_test <- ut_test[order(ut_test)]
+    
+    ## get KM estimates of survival function for train data
+    KM_train <- unique(survfit(Surv(time_train,event_train)~1)$surv)
+    ## get KM estimates of survival function for test data where test and training overlap
+    ## impute linearly on the log scale for survival times which are not in the training dataset
+    KM_test  <- rep(NA, length(ut_test))
+    for(i in seq_along(ut_test)){
+        ## if test data survival time less than the minimum observed event time in the training dataset
+        ## impute survival time on the linearly log scale
+        if(ut_test[i] < min(ut_train)){
+            KM_test[i] <- exp(log(1) - (log(1) - log(KM_train[1])) / (ut_train[1]-0) * (ut_test[1]-0))
+        }
+        ## if test data survival time within the observed range of event times in the training dataset,
+        ## either use the KM estimate (if the training time is in the test times), or impute linearly on the log scale
+        if(ut_test[i] >= min(ut_train) & ut_test[i] < max(ut_train)){
+            inx_l <- max(which(ut_train <= ut_test[i]))
+            inx_r <- min(which(ut_train > ut_test[i]))
+            st_l <- KM_train[inx_l]
+            st_r <- KM_train[inx_r]
+            t_l <- ut_train[inx_l]
+            t_r <- ut_train[inx_r]
+            KM_test[i] <- exp(log(st_l) - (log(st_l) - log(st_r))/(t_r -t_l)  * (ut_test[i] - t_l))
+        }
+        ## if the test data survival time is beyond the observe range of event times in the training dataset,
+        ## use the last observed survival probability
+        if(ut_test[i] >= max(ut_train)){
+            KM_test[i] <- min(KM_train)
+        }
+    }
+    
+    ## derive the KM estimate of the censoring time
+    ut_train_censor <- unique(time_train[event_train == 0])
+    ut_train_censor <- ut_train_censor[order(ut_train_censor)]
+    ut_test_censor <- unique(time_test[event_test == 0])
+    ut_test_censor <- ut_test_censor[order(ut_test_censor)]
+    ## get KM estimates of censoring time for train data
+    KM_train_censor <- unique(survfit(Surv(time_train,1-event_train)~1)$surv)
+    ## get KM estimates of censoring time for test data where test and training overlap
+    ## impute linearly on the log scale for survival times which are not in the training dataset
+    KM_test_censor  <- rep(NA, length(ut_test_censor))
+    for(i in seq_along(ut_test_censor)){
+        ## if test data survival time less than the minimum observed event time in the training dataset
+        ## impute survival time on the linearly log scale
+        if(ut_test_censor[i] < min(ut_train_censor)){
+            KM_test_censor[i] <- exp(log(1) - (log(1) - log(KM_train_censor[1])) / (ut_train_censor[1]-0) * (ut_test_censor[1]-0))
+        }
+        ## if test data survival time within the observed range of event times in the training dataset,
+        ## either use the KM estimate (if the training time is in the test times), or impute linearly on the log scale
+        if(ut_test_censor[i] >= min(ut_train_censor) & ut_test_censor[i] < max(ut_train_censor)){
+            inx_l <- max(which(ut_train_censor <= ut_test_censor[i]))
+            inx_r <- min(which(ut_train_censor > ut_test_censor[i]))
+            st_l <- KM_train_censor[inx_l]
+            st_r <- KM_train_censor[inx_r]
+            t_l <- ut_train_censor[inx_l]
+            t_r <- ut_train_censor[inx_r]
+            KM_test_censor[i] <- exp(log(st_l) - (log(st_l) - log(st_r))/(t_r -t_l)  * (ut_test_censor[i] - t_l))
+        }
+        ## if the test data survival time is beyond the observe range of event times in the training dataset,
+        ## use the last observed survival probability
+        if(ut_test_censor[i] >= max(ut_train_censor)){
+            KM_test_censor[i] <- min(KM_train_censor)
+        }
+    }
+    
+    ## fit each model using train data
+    fit_laft <- fit_mgcv(data = train_data, family = "LAFT", sgrid = sgrid)[[1]]
+    fit_aaft <- fit_mgcv(data = train_data, family = "AAFT", sgrid = sgrid)[[1]]
+    fit_lfcm <- fit_mgcv(data = train_data, family = "LFCM", sgrid = sgrid)[[1]]
+    fit_afcm <- fit_mgcv(data = train_data, family = "AFCM", sgrid = sgrid)[[1]]
+    fit_logistic = pfr(is_user ~ age_in_years + bmi + lf(X_mat, argvals = sgrid), 
+                    family = binomial(), method = "REML", data = train_data)
+    
+    ## obtain linear predictors
+    eta_laft <- predict(fit_laft, test_data2, type = "link")
+    eta_aaft <- predict(fit_aaft, test_data2, type = "link")
+    eta_lfcm <- predict(fit_lfcm, test_data2, type = "link")
+    eta_afcm <- predict(fit_afcm, test_data2, type = "link")
+    
+    ## calculate the cross-validated c-index
+    #cindex_laft[k] <- cal_c(marker = -eta_laft, Stime = time_test, status = event_test)
+    #cindex_aaft[k] <- cal_c(marker = -eta_aaft, Stime = time_test, status = event_test)
+    #cindex_lfcm[k] <- cal_c(marker = eta_lfcm, Stime = time_test, status = event_test)
+    #cindex_afcm[k] <- cal_c(marker = eta_afcm, Stime = time_test, status = event_test)
+
+    ## calculate the cross-validated brier score
+    S_laft <- cal_stime(fit = fit_laft, data = test_data2, tgrid = tgrid, family = 'lognormal')
+    S_aaft <- cal_stime(fit = fit_aaft, data = test_data2, tgrid = tgrid, family = 'lognormal')
+    S_lfcm <- cal_stime(fit = fit_lfcm, data = test_data2, tgrid = tgrid, family = 'cox.ph')
+    S_afcm <- cal_stime(fit = fit_afcm, data = test_data2, tgrid = tgrid, family = 'cox.ph')
+    
+    Brier_laft[k] <- cal_Brier(S_laft, Stime = time_test, status = event_test, tgrid = tgrid)
+    Brier_aaft[k] <- cal_Brier(S_aaft, Stime = time_test, status = event_test, tgrid = tgrid)
+    Brier_lfcm[k] <- cal_Brier(S_lfcm, Stime = time_test, status = event_test, tgrid = tgrid)
+    Brier_afcm[k] <- cal_Brier(S_afcm, Stime = time_test, status = event_test, tgrid = tgrid)
+    
+    # Brier score for functional logistic regression
+    pred_p <- predict(fit_logistic, newdata = test_data, type = "response")
+    Brier_logistic[k] <- mean((pred_p - test_data$is_user)^2)
+    
+}
+
+df_Brier <- data.frame(Model = c("Linear AFT", "Additive AFT", "LFCM", "AFCM", "Functional Logistic"),
+                       Brier_score = c(mean(Brier_laft), mean(Brier_aaft), mean(Brier_lfcm), mean(Brier_afcm), mean(Brier_logistic)))
+df_Brier <- data.frame(Model = c("Linear AFT", "LFCM", "Functional Logistic"),
+                       Brier_score = c(mean(Brier_laft), mean(Brier_lfcm), mean(Brier_logistic)))
+print(df_Brier)
+
+df_cindex <- data.frame(Model = c("Linear AFT", "Additive AFT", "LFCM", "AFCM"),
+                        C_index = c(mean(cindex_laft), mean(cindex_aaft), mean(cindex_lfcm), mean(cindex_afcm)))
+
+print(df_cindex)
+```
+

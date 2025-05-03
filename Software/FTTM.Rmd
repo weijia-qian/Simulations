@@ -1,0 +1,322 @@
+---
+title: "Functional Time Transformation Model"
+author: "Rahul Ghosal, Marcos Matabuena and Sujit Ghosh"
+date: "07/01/2024"
+output:
+  html_document:
+    toc: true
+    number_sections: true
+---
+  ```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Introduction
+
+This document presents an illustration of the Functional Time Transformation Model (FTTM) developed in Ghosal et al., 2024. 
+
+# Example 1: Functional Cox Model
+First we generate survival times following a functional proportional hazard model (Scenario A1 in paper)and fit the FTTM. 
+```{r, tidy = FALSE,message=FALSE,warning=FALSE, fig.width=6, fig.height=5}
+###########Generating data##############################
+set.seed(123)
+n<-500  
+Z1<-rbinom(n,1,0.5)
+Z2<-rnorm(n,0,1)
+X<-cbind(rep(1,n),Z1,Z2)
+###############################
+m <- 101
+S<- seq(0, 1, length = m)
+rankX <- 10
+Phi <- cbind(1/sqrt(m), poly(S, degree=rankX-1))
+lambda <- rankX:1
+Xi <- sapply(lambda, function(l)
+  scale(rnorm(n, sd=2*sqrt(l)), scale=FALSE))
+Xs <- Xi %*% t(Phi) 
+
+beta<-c(log(0.2),-0.5,0.4)
+beta_s<-function(s){1*cos (pi*s)}
+betaS<-beta_s(S)
+lfterm2<-as.numeric((1/m)*Xs%*%betaS) #xs=zs
+
+ratesurv<-function(i) 
+{exp(sum(beta*X[i,])+lfterm2[i])
+}
+ratelat<-unlist(lapply(1:n,ratesurv)) #
+mu_c<-20   #censoring times mean
+T_tr<-c() ##survival times true
+C<-c() #censoring time
+T_obs<-c() #observed survival time
+for(i in 1:n)
+{
+  temp<-rexp(1,rate=ratelat[i])
+  T_tr[i]<- temp #true survival time
+  C[i]<-rexp(1,rate=(1/mu_c))
+  T_obs[i]=min(T_tr[i],C[i])
+}
+delta<-as.numeric(T_tr<C)
+
+mean(delta==1) #proportion uncensored
+mean(delta==0) #proportion censored 
+###KM estimates#######
+library(survival)
+fitKM <- survfit(Surv(T_obs,delta) ~ 1)###
+plot(fitKM, xlab="Days", main = 'Kaplan Meyer Plot') 
+```
+
+Next we fit a functional Cox model for illustration, which is the oracle model in this case.
+
+```{r fig.height=7, fig.width=7, message=FALSE, warning=FALSE, tidy=FALSE}
+newdf<-data.frame("time"=T_obs,"status"=delta,"X1"=X[,2],"X2"=X[,3])
+Xmat<-X[,c(2:3)]
+library(mgcv)
+Smat<-matrix(S,n,m,byrow=TRUE)
+Xs_sc<-Xs/m
+newdf$Xs_sc<-Xs_sc
+mod1_func <-gam(time~X1+X2+s(Smat,k=20,by=Xs_sc,bs="ps",m=2),
+                family=cox.ph(),data=newdf,weights=status)
+summary(mod1_func)
+pdf(NULL)
+aa_clf<-plot(mod1_func,select = 1,ylim=c(-5,5),n=m)
+invisible(dev.off())
+betaest_coxlf<-as.numeric(mod1_func$coefficients[1:2])
+betaests_coxlf<-as.numeric(aa_clf[[1]]$fit)
+#Estimated effect from Cox Model#
+plot(S,betaS,col=1,type="l")
+lines(S,betaests_coxlf,col=3)
+
+#baseline survival
+#plot(mod1_func$family$data$tr,exp(-mod1_func$family$data$h),type="l",ylim=c(0,1),
+#     xlab="time",ylab="survival")
+est_coxlf_base<-exp(-mod1_func$family$data$h)
+est_coxlf_base<-est_coxlf_base[order(mod1_func$family$data$tr)]
+time_coxlf<-sort(mod1_func$family$data$tr)
+#plot(time_coxlf,est_coxlf_base,type="l",col=3)
+```
+
+Next we source the file ``sourceFTTM.R" which contains all the required R functions for estimation.
+
+```{r fig.height=7, fig.width=7, message=FALSE, warning=FALSE, tidy=FALSE}
+source("sourceFTTM.R")
+plot(time_coxlf,est_coxlf_base,type="l",col=3)
+##true baseline survival S(t)=F_epsbar(H(t)), H(t)=beta0+log(t)
+true_H<-beta[1]+log(time_coxlf)
+trubas<-F_epsilon_bar(true_H,r=0)
+lines(time_coxlf,trubas,col="black") #matches
+tau<-ceiling(max(T_obs))
+p1<-ncol(Xmat)
+
+N0grid<-c(7,10)
+N1grid<-c(3,5) #can make big given resources
+#r=0 #Cox specification
+rgrid<-0
+gridN<-expand.grid(N0=N0grid,N1=N1grid,r=rgrid)
+gridN<-as.matrix(gridN)
+AICres<-apply(gridN,1,ChooseAICval)  
+AICvec<-c()
+for (k in 1:nrow(gridN))
+{AICvec[k]<-AICres[[k]]$AICval
+}
+indmin<-which.min(AICvec)
+Nrvecsel<-gridN[indmin,] #optimal N with minimum AIC
+N0<-as.numeric(Nrvecsel[1])
+N1<-as.numeric(Nrvecsel[2])
+r<-as.numeric(Nrvecsel[3])
+  
+finalest<-estFTTM.final(Nrvecsel)
+
+psiest<-finalest$psiest
+SEpar<-finalest$SEpar
+VCOVpar<-finalest$VCOVpar
+
+betaest<-psiest[1:p1] 
+### estimated beta ###
+betaest
+#true beta#
+beta[2:3]
+##############
+p1<-ncol(Xmat)
+etaest<-psiest[(p1+1):(p1+N0+1)]
+gammaest<-c()
+gammaest[1]<-etaest[1]
+for (k in 2: length(etaest))
+{gammaest[k]<-gammaest[k-1]+exp(etaest[k])
+}
+
+thetaest<-psiest[(p1+N0+1+1):(p1+N0+1+N1+1)]
+betas_tt_est<-beta_s_estfun(S,thetaest,N1)
+
+###covariance matrix of parameters##
+VCOVparfunc<-VCOVpar[(p1+N0+1+1):(p1+N0+1+N1+1),(p1+N0+1+1):(p1+N0+1+N1+1)]
+basismat <- NULL
+for(k in 0:N1){
+  basismat<- cbind(basismat, dbeta((S), shape1=(k+1), shape2=N1-k+1))
+}
+basismat<-(1/(N1+1))*basismat
+vcov_betas<-basismat%*%VCOVparfunc%*%t(basismat)
+SE_betas<-sqrt(diag(vcov_betas))
+#asymptotic 95% point-wise confidence interval
+lcb_betas<-betas_tt_est-1.96*SE_betas
+ucb_betas<-betas_tt_est+1.96*SE_betas
+plot(S,betaS,col=1,type="l",ylim=c(-2,2)) 
+lines(S,betas_tt_est,col=4)
+lines(S,lcb_betas,col=4,lty=3)
+lines(S,ucb_betas,col=4,lty=3) #CI looks good
+abline(h=0)
+```
+
+# Example 2: Functional PO Model
+Next, we generate survival times following a functional proportional odds model (Scenario A2 in paper)and fit the FTTM. 
+```{r, tidy = FALSE,message=FALSE,warning=FALSE, fig.width=6, fig.height=5}
+###########Generating data##############################
+set.seed(1)
+n<-500 
+Z1<-rbinom(n,1,0.5)
+Z2<-rnorm(n,0,1)
+X<-cbind(Z1,Z2)
+###############################
+m <- 101
+S<- seq(0, 1, length = m)
+rankX <- 10
+Phi <- cbind(1/sqrt(m), poly(S, degree=rankX-1))
+lambda <- rankX:1
+Xi <- sapply(lambda, function(l)
+  scale(rnorm(n, sd=2*sqrt(l)), scale=FALSE))
+Xs <- Xi %*% t(Phi)
+beta<-c(-0.8,1.6)
+beta_s<-function(s){2*sin (pi*s)} #functional effect
+betaS<-beta_s(S)
+lfterm2<-as.numeric((1/m)*Xs%*%betaS) 
+totterm<-function(i){exp(-1*((sum(beta*X[i,])+lfterm2[i])))
+}
+tottermvec<-unlist(lapply(1:n,totterm)) 
+mu_c<-5   
+T_tr<-c() 
+C<-c() 
+T_obs<-c() #observed survival time
+for(i in 1:n)
+{
+  u<-runif(1,0,1)
+  temp<-sqrt((u/(1-u))*tottermvec[i] )
+  T_tr[i]<- temp #true survival time
+  C[i]<-rexp(1,rate=(1/mu_c))
+  T_obs[i]=min(T_tr[i],C[i])
+}
+delta<-as.numeric(T_tr<C)
+mean(delta==1) #proportion uncensored
+mean(delta==0) #proportion censored 
+###KM estimates#######
+library(survival)
+fitKM <- survfit(Surv(T_obs,delta) ~ 1)###
+plot(fitKM, xlab="Days", main = 'Kaplan Meyer Plot') 
+```
+
+Next we fit functional Cox model and functional principal component based PO model for illustration. 
+
+```{r fig.height=7, fig.width=7, message=FALSE, warning=FALSE, tidy=FALSE}
+newdf<-data.frame("time"=T_obs,"status"=delta,"X1"=X[,1],"X2"=X[,2])
+Xmat<-X[,c(1:2)]
+library(mgcv)
+Smat<-matrix(S,n,m,byrow=TRUE)
+Xs_sc<-Xs/m
+newdf$Xs_sc<-Xs_sc
+###misspecified cox model####
+mod1_func <-gam(time~X1+X2+s(Smat,k=20,by=Xs_sc,bs="ps",m=2),
+                family=cox.ph(),data=newdf,weights=status)
+summary(mod1_func)
+pdf(NULL)
+aa_clf<-plot(mod1_func,select = 1,ylim=c(-5,5),n=m)
+invisible(dev.off())
+betaest_coxlf<-as.numeric(mod1_func$coefficients[1:2])
+betaests_coxlf<-as.numeric(aa_clf[[1]]$fit)
+plot(S,betaS,col=1,type="l",ylim=c(-5,5))
+lines(S,betaests_coxlf,col=3) 
+#PO model on FPC scores#
+library(refund)
+fpcamod<-fpca.face(Xs,pve=0.95) 
+scoremat<-fpcamod$scores
+k<-ncol(scoremat)
+eigenmat<-fpcamod$efunctions
+library(mets)
+newdf$scoremat<-scoremat
+out1 <- logitSurv(Surv(time,status)~X1+X2+scoremat,data=newdf)
+summary(out1)
+beta_PO<-as.numeric(coef(out1))
+betaest_PO<-beta_PO[1:2]
+betaest_PO_vec<-beta_PO[3:(2+k)]
+betaests_PO<-m*as.numeric(eigenmat%*%betaest_PO_vec)
+lines(S,betaests_PO,col=4) 
+```
+
+Next we apply the proposed FTTM for PO model specification ($r=1$).
+
+```{r fig.height=7, fig.width=7, message=FALSE, warning=FALSE, tidy=FALSE}
+source("sourceFTTM.R")
+tau<-ceiling(max(T_obs))
+p1<-ncol(Xmat)
+
+N0grid<-c(7,10)
+N1grid<-c(3,5) #can make big given resources
+#r=0 #Cox specification
+rgrid<-1
+gridN<-expand.grid(N0=N0grid,N1=N1grid,r=rgrid)
+gridN<-as.matrix(gridN)
+AICres<-apply(gridN,1,ChooseAICval)  
+AICvec<-c()
+for (k in 1:nrow(gridN))
+{AICvec[k]<-AICres[[k]]$AICval
+}
+indmin<-which.min(AICvec)
+Nrvecsel<-gridN[indmin,] #optimal N with minimum AIC
+N0<-as.numeric(Nrvecsel[1])
+N1<-as.numeric(Nrvecsel[2])
+r<-as.numeric(Nrvecsel[3])
+  
+finalest<-estFTTM.final(Nrvecsel)
+
+psiest<-finalest$psiest
+SEpar<-finalest$SEpar
+VCOVpar<-finalest$VCOVpar
+
+betaest<-psiest[1:p1] 
+### estimated beta ###
+betaest
+#true beta#
+beta
+##############
+p1<-ncol(Xmat)
+etaest<-psiest[(p1+1):(p1+N0+1)]
+gammaest<-c()
+gammaest[1]<-etaest[1]
+for (k in 2: length(etaest))
+{gammaest[k]<-gammaest[k-1]+exp(etaest[k])
+}
+
+thetaest<-psiest[(p1+N0+1+1):(p1+N0+1+N1+1)]
+betas_tt_est<-beta_s_estfun(S,thetaest,N1)
+
+###covariance matrix of parameters##
+VCOVparfunc<-VCOVpar[(p1+N0+1+1):(p1+N0+1+N1+1),(p1+N0+1+1):(p1+N0+1+N1+1)]
+basismat <- NULL
+for(k in 0:N1){
+  basismat<- cbind(basismat, dbeta((S), shape1=(k+1), shape2=N1-k+1))
+}
+basismat<-(1/(N1+1))*basismat
+vcov_betas<-basismat%*%VCOVparfunc%*%t(basismat)
+SE_betas<-sqrt(diag(vcov_betas))
+#asymptotic 95% point-wise confidence interval
+lcb_betas<-betas_tt_est-1.96*SE_betas
+ucb_betas<-betas_tt_est+1.96*SE_betas
+plot(S,betaS,col=1,type="l",ylim=c(-2,2)) 
+lines(S,betas_tt_est,col=4)
+lines(S,lcb_betas,col=4,lty=3)
+lines(S,ucb_betas,col=4,lty=3) #CI looks good
+abline(h=0)
+```
+
+We observe that the proposed FTTM captures the functional parameter more accurately.
+<br><br><br>
+
+
+
+
