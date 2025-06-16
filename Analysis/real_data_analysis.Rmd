@@ -1,8 +1,12 @@
 ---
 title: "Real Data Analysis"
 author: "Weijia Qian"
-date: "2025-03-04"
-output: html_document
+date: '`r format(Sys.time(), "%Y-%m-%d")`'
+output:
+  html_document: 
+    code_folding: hide
+    toc: true
+    toc_float: true
 ---
 
 ```{r setup, include=FALSE}
@@ -43,7 +47,7 @@ sapply(df, n_distinct)
 # create user/non-user variable
 df$is_user <- ifelse(df$use_group == "No Use", 0, 1)
 # set censoring time to 8h
-df$time_since_use <- ifelse(df$is_user == 1, df$mins_since_consump, NA)
+df$time_since_use <- ifelse(df$is_user == 1, df$mins_since_consump, 480)
 
 # transpose to wide format
 df_wide <- df %>%
@@ -111,19 +115,19 @@ fit_mgcv <- function(data, family, sgrid, bs = "ps", k = 30){
   # fit functional AFT model using mgcv
   tgrid <- seq(0, 125, len = 100) 
   #df_surv = data2
-  L <- kronecker(matrix(1, 1, 1), t(lvec))
-  S <- kronecker(matrix(1, 1, 1), t(sgrid))
+  L1 <- kronecker(matrix(1, 1, 1), t(lvec))
+  S1 <- kronecker(matrix(1, 1, 1), t(sgrid))
   df_surv_user <- data.frame(X = I(pupil_means_user),
-                      L = I(L),
-                      X_L = I(pupil_means_user * L),
-                      S = I(S),
+                      L = I(L1),
+                      X_L = I(pupil_means_user * L1),
+                      S = I(S1),
                       #logY = I(logY),
                       age_in_years = age_mean_user,
                       bmi = bmi_mean_user)
   df_surv_nonuser <- data.frame(X = I(pupil_means_nonuser),
-                      L = I(L),
-                      X_L = I(pupil_means_nonuser * L),
-                      S = I(S),
+                      L = I(L1),
+                      X_L = I(pupil_means_nonuser * L1),
+                      S = I(S1),
                       #logY = I(logY),
                       age_in_years = age_mean_nonuser,
                       bmi = bmi_mean_nonuser)
@@ -146,7 +150,7 @@ fit_mgcv <- function(data, family, sgrid, bs = "ps", k = 30){
     surv_nonuser <- cal_stime(fit = fit, data = df_surv_nonuser, tgrid = tgrid, family = 'cox.ph')
   }
   
-  return(list(fit, surv_user, surv_nonuser))
+  return(list(fit, surv_user, surv_nonuser, data2))
 }
 ```
 
@@ -419,13 +423,22 @@ ggplot(hazard_df) +
 ```{r, functional logstic regression}
 library(tidyfun)
 df_post1_r$X_mat <- as.matrix(df_post1_r[, grep("^pct_chg_", colnames(df_post1_r))])
+df_post1_r$is_user_45 <- ifelse(df_post1_r$time_since_use <= 45, 1, 0)
+df_post1_r$is_user_60 <- ifelse(df_post1_r$time_since_use <= 60, 1, 0)
+df_post1_r$is_user_120 <- ifelse(df_post1_r$time_since_use <= 120, 1, 0)
 
-fit1.logistic = pfr(is_user ~ age_in_years + bmi + lf(X_mat, argvals = sgrid), 
+fit1.logistic = pfr(is_user_45 ~ age_in_years + bmi + lf(X_mat, argvals = sgrid), 
+                    family = binomial(), method = "REML", data = df_post1_r)
+fit2.logistic = pfr(is_user_60 ~ age_in_years + bmi + lf(X_mat, argvals = sgrid), 
+                    family = binomial(), method = "REML", data = df_post1_r)
+fit3.logistic = pfr(is_user_120 ~ age_in_years + bmi + lf(X_mat, argvals = sgrid), 
                     family = binomial(), method = "REML", data = df_post1_r)
 summary(fit1.logistic)
+summary(fit2.logistic)
+summary(fit3.logistic)
 
 coef_df = 
-  coef(fit1.logistic) %>% 
+  coef(fit3.logistic) %>% 
   rename(estimate = value) %>% 
   mutate(
     method = "pfr_adj",
@@ -439,7 +452,7 @@ coef_df %>%
   geom_errorband(aes(ymax = ub, ymin = lb)) +
   labs(x = "Seconds since light stimulus (s)", 
        y = expression(beta~"(s)"),
-       title = "Estimated coefficient function") +
+       title = "Cutoff = 120 min") +
   theme_minimal()
 
 df_pred <- predict(fit1.logistic, type = "response")
@@ -467,7 +480,7 @@ ggplot(data = df_plot, mapping = aes(x = time)) +
 set.seed(624) 
 n_folds <- 10 # number of folds
 ### variables that store the c-index and Brier's score in each calculation
-cindex_laft <- cindex_aaft <- cindex_lfcm <- cindex_afcm <- rep(0, n_folds)
+cindex_laft <- cindex_aaft <- cindex_lfcm <- cindex_afcm <- cindex_logistic <- rep(0, n_folds)
 Brier_laft <- Brier_aaft <- Brier_lfcm <- Brier_afcm <- Brier_logistic <- rep(0, n_folds)
 ### use "createFolds" function from "caret" package to divide real data into n_folds folds
 fold <- createFolds(df_post1_r$time_since_use, k = n_folds, list = FALSE)
@@ -596,12 +609,14 @@ for(k in 1:n_folds){
     eta_aaft <- predict(fit_aaft, test_data2, type = "link")
     eta_lfcm <- predict(fit_lfcm, test_data2, type = "link")
     eta_afcm <- predict(fit_afcm, test_data2, type = "link")
+    eta_logistic <- predict(fit1.logistic, newdata = df_post1_r, type = "response")
     
     ## calculate the cross-validated c-index
-    #cindex_laft[k] <- cal_c(marker = -eta_laft, Stime = time_test, status = event_test)
-    #cindex_aaft[k] <- cal_c(marker = -eta_aaft, Stime = time_test, status = event_test)
-    #cindex_lfcm[k] <- cal_c(marker = eta_lfcm, Stime = time_test, status = event_test)
-    #cindex_afcm[k] <- cal_c(marker = eta_afcm, Stime = time_test, status = event_test)
+    cindex_laft[k] <- cal_c(marker = -eta_laft, Stime = time_test, status = event_test)
+    cindex_aaft[k] <- cal_c(marker = -eta_aaft, Stime = time_test, status = event_test)
+    cindex_lfcm[k] <- cal_c(marker = eta_lfcm, Stime = time_test, status = event_test)
+    cindex_afcm[k] <- cal_c(marker = eta_afcm, Stime = time_test, status = event_test)
+    cindex_logistic[k] <- cal_c(marker = eta_logistic, Stime = time_test, status = event_test)
 
     ## calculate the cross-validated brier score
     S_laft <- cal_stime(fit = fit_laft, data = test_data2, tgrid = tgrid, family = 'lognormal')
@@ -626,9 +641,146 @@ df_Brier <- data.frame(Model = c("Linear AFT", "LFCM", "Functional Logistic"),
                        Brier_score = c(mean(Brier_laft), mean(Brier_lfcm), mean(Brier_logistic)))
 print(df_Brier)
 
-df_cindex <- data.frame(Model = c("Linear AFT", "Additive AFT", "LFCM", "AFCM"),
-                        C_index = c(mean(cindex_laft), mean(cindex_aaft), mean(cindex_lfcm), mean(cindex_afcm)))
+df_cindex <- data.frame(Model = c("Linear AFT", "Additive AFT", "LFCM", "AFCM", "Functional Logistic"),
+                        C_index = c(mean(cindex_laft), mean(cindex_aaft), mean(cindex_lfcm), mean(cindex_afcm), mean(cindex_logistic)))
 
 print(df_cindex)
+```
+
+```{r, sensitivity and specificity}
+library(pROC)
+tgrid <- seq(0, 120, len = 121) 
+threshold <- 0.6868
+
+surv.laft <- cal_stime(fit = fit1.laft[[1]], data = fit1.laft[[4]], tgrid = tgrid, family = 'lognormal')
+surv.lfcm <- cal_stime(fit = fit1.lfcm[[1]], data = fit1.lfcm[[4]], tgrid = tgrid, family = 'cox.ph')
+surv.aaft <- cal_stime(fit = fit1.aaft[[1]], data = fit1.aaft[[4]], tgrid = tgrid, family = 'lognormal')
+surv.afcm <- cal_stime(fit = fit1.afcm[[1]], data = fit1.afcm[[4]], tgrid = tgrid, family = 'cox.ph')
+
+surv45 <- df_post1_r$time_since_use > 45
+surv45.laft <- surv.laft[, 46] > threshold
+surv45.lfcm <- surv.lfcm[, 46] > threshold
+surv45.aaft <- surv.aaft[, 46] > threshold
+surv45.afcm <- surv.afcm[, 46] > threshold
+surv45.logistic <- predict(fit1.logistic, newdata = df_post1_r, type = "response") < threshold
+
+surv120 <- df_post1_r$time_since_use > 120
+surv120.laft <- surv.laft[, 121] > threshold
+surv120.lfcm <- surv.lfcm[, 121] > threshold
+surv120.aaft <- surv.aaft[, 121] > threshold
+surv120.afcm <- surv.afcm[, 121] > threshold
+surv120.logistic <- predict(fit3.logistic, newdata = df_post1_r, type = "response") < threshold
+
+# cutoff = 45 min
+df_surv45 <- data.frame(model = rep(c("Linear AFT", "Additive AFT", "LFCM", "AFCM", "Functional Logistic"), each = 123),
+                      truth = rep(surv45, times = 5),
+                      estimate = c(surv45.laft, surv45.aaft, surv45.lfcm, surv45.afcm, surv45.logistic))
+
+df_se45 <- df_surv45 %>%
+  group_by(model) %>%
+  summarise(se = round(sum(estimate & truth) / sum(truth), 4))
+
+df_sp45 <- df_surv45 %>%
+  group_by(model) %>%
+  summarise(sp = round(sum(!truth & !estimate) / sum(!truth), 4))
+
+# cutoff = 120 min
+df_surv120 <- data.frame(model = rep(c("Linear AFT", "Additive AFT", "LFCM", "AFCM", "Functional Logistic"), each = 123),
+                      truth = rep(surv120, times = 5),
+                      estimate = c(surv120.laft, surv120.aaft, surv120.lfcm,surv120.afcm, surv120.logistic))
+
+df_se120 <- df_surv120 %>%
+  group_by(model) %>%
+  summarise(se = round(sum(estimate & truth) / sum(truth), 4))
+
+df_sp120 <- df_surv120 %>%
+  group_by(model) %>%
+  summarise(sp = round(sum(!truth & !estimate) / sum(!truth), 4))
+
+# AUC
+roc.laft <- roc(surv45, surv.laft[, 46])
+roc.aaft <- roc(surv45, surv.aaft[, 46])
+roc.lfcm <- roc(surv45, surv.lfcm[, 46])
+roc.afcm <- roc(surv45, surv.afcm[, 46])
+roc.logistic <- roc(surv45, 1 - predict(fit1.logistic, newdata = df_post1_r, type = "response"))
+
+df_auc45 <- data.frame(model = c("Linear AFT", "Additive AFT", "LFCM", "AFCM", "Functional Logistic"),
+                       AUC = round(c(auc(roc.laft), auc(roc.aaft), auc(roc.lfcm), auc(roc.afcm), auc(roc.logistic)), 4))
+
+roc.laft <- roc(surv120, surv.laft[, 121])
+roc.aaft <- roc(surv120, surv.aaft[, 121])
+roc.lfcm <- roc(surv120, surv.lfcm[, 121])
+roc.afcm <- roc(surv120, surv.afcm[, 121])
+roc.logistic <- roc(surv120, 1 - predict(fit3.logistic, newdata = df_post1_r, type = "response"))
+
+df_auc120 <- data.frame(model = c("Linear AFT", "Additive AFT", "LFCM", "AFCM", "Functional Logistic"),
+                       AUC = round(c(auc(roc.laft), auc(roc.aaft), auc(roc.lfcm), auc(roc.afcm), auc(roc.logistic)), 4))
+
+# Brier score
+# Predicted survival probabilities at t = 45
+prob.laft <- surv.laft[, 46]
+prob.aaft <- surv.aaft[, 46]
+prob.lfcm <- surv.lfcm[, 46]
+prob.afcm <- surv.afcm[, 46]
+prob.logistic <- 1 - predict(fit1.logistic, newdata = df_post1_r, type = "response")
+
+df_brier45 <- data.frame(model = c("Linear AFT", "Additive AFT", "LFCM", "AFCM", "Functional Logistic"),
+                         brier = round(c(mean((prob.laft - surv45)^2), 
+                                         mean((prob.aaft - surv45)^2),
+                                         mean((prob.lfcm - surv45)^2),
+                                         mean((prob.afcm - surv45)^2),
+                                         mean((prob.logistic - surv45)^2)), 4))
+
+# Predicted survival probabilities at t = 120
+prob.laft <- surv.laft[, 121]
+prob.aaft <- surv.aaft[, 121]
+prob.lfcm <- surv.lfcm[, 121]
+prob.afcm <- surv.afcm[, 121]
+prob.logistic <- 1 - predict(fit3.logistic, newdata = df_post1_r, type = "response")
+
+df_brier120 <- data.frame(model = c("Linear AFT", "Additive AFT", "LFCM", "AFCM", "Functional Logistic"),
+                         brier = round(c(mean((prob.laft - surv120)^2), 
+                                         mean((prob.aaft - surv120)^2),
+                                         mean((prob.lfcm - surv120)^2),
+                                         mean((prob.afcm - surv120)^2),
+                                         mean((prob.logistic - surv120)^2)), 4))
+```
+
+```{r}
+truth <- as.numeric(surv45)
+
+# Predicted survival probabilities at 45 minutes
+prob.laft <- surv.laft[, 46]
+prob.aaft <- surv.aaft[, 46]
+prob.lfcm <- surv.lfcm[, 46]
+prob.afcm <- surv.afcm[, 46]
+prob.logistic <- 1 - predict(fit1.logistic, newdata = df_post1_r, type = "response")
+
+# Function to compute Youden's J optimal cutoff
+get_best_cutoff <- function(true, prob) {
+  roc_obj <- roc(true, prob)
+  coords(roc_obj, "best", best.method = "youden", 
+         ret = c("threshold", "sensitivity", "specificity", "youden"))
+}
+
+# Apply to each model
+best.laft <- get_best_cutoff(truth, prob.laft)
+best.aaft <- get_best_cutoff(truth, prob.aaft)
+best.lfcm <- get_best_cutoff(truth, prob.lfcm)
+best.afcm <- get_best_cutoff(truth, prob.afcm)
+best.logistic <- get_best_cutoff(truth, prob.logistic)
+
+# Combine results
+youden_df <- data.frame(
+  model = c("Linear AFT", "Additive AFT", "LFCM", "AFCM", "Functional Logistic"),
+  threshold = round(c(best.laft$threshold, best.aaft$threshold, best.lfcm$threshold,
+                      best.afcm$threshold, best.logistic$threshold), 4),
+  sensitivity = round(c(best.laft$sensitivity, best.aaft$sensitivity, best.lfcm$sensitivity,
+                        best.afcm$sensitivity, best.logistic$sensitivity), 4),
+  specificity = round(c(best.laft$specificity, best.aaft$specificity, best.lfcm$specificity,
+                        best.afcm$specificity, best.logistic$specificity), 4),
+  youden = round(c(best.laft$youden, best.aaft$youden, best.lfcm$youden,
+                   best.afcm$youden, best.logistic$youden), 4)
+)
 ```
 

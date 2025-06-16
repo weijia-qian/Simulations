@@ -26,15 +26,16 @@ load(here("Source", "dat_func.Rdata"))
 ```{r}
 # Simulate functional survival data
 family <- "lognormal"
-n <- 100   # number of subjects
-nS <- 100   # number of observations
-beta_type <- "complex"
+n <- 500   # number of subjects
+nS <- 500   # number of observations
+beta_type <- "simple"
 beta0_true <- 0.5
-b_true <- 0.1
+b_true <- 0.5
 
 simdata <- simulate_AFT(family = family, n = n, nS =nS, beta_type = beta_type, beta_0 = beta0_true,
                         b = b_true)
 simdata <- simulate_Cox(n = n, nS = nS, beta_type = beta_type)
+saveRDS(simdata, file = "simdata.rds")
 
 # Optimize lambda using GCV
 model <- "lognormal"

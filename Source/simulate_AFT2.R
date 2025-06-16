@@ -5,7 +5,7 @@ simulate_AFT2 = function(data = dat_func,
                         smax = 1,
                         nS = 401,
                         beta_type = "linear",
-                        beta_0 = log(62),
+                        beta_0 = 0.5,
                         b = 0.1,
                         u = 1600,
                         seed = 916){
@@ -46,7 +46,7 @@ simulate_AFT2 = function(data = dat_func,
   
   ## define pre-specified functional coefficient surface F(.,.)
   if(beta_type == "linear"){
-    beta <- function(X, s) -X*s
+    beta <- function(X, s) -0.5*X*s
   }else if(beta_type == "const"){
     beta <- function(X, s) -X*0.1
   }else if(beta_type == "nonlinear1"){
