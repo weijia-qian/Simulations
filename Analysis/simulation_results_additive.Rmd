@@ -1,0 +1,309 @@
+---
+title: "Simulation Results for Additive Models"
+author: "Weijia Qian"
+date: '`r format(Sys.time(), "%Y-%m-%d")`'
+output:
+  html_document: 
+    code_folding: hide
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, repr.plot.width = 12, repr.plot.height = 8)
+library(CCMHr)
+library(gt)
+library(kableExtra)
+library(MASS)
+library(mgcv)
+library(refund)
+library(scam)
+library(splines)
+library(tidyverse)
+
+folder_path <- "/Users/weijia/Research/FDA/Simulations/Output/20250615"
+rda_files <- list.files(path = folder_path, pattern = "\\.RDA$", full.names = TRUE)
+all_results <- list()
+for (i in 1:length(rda_files)) {
+  all_results[[i]] <- loadRDa(rda_files[[i]])
+}
+
+# remove empty lists
+all_results[[6]] <- Filter(Negate(is.null), all_results[[6]])
+```
+
+### Function to Create Summary Table
+```{r}
+# Transpose dataset from wide to long
+create_table <- function(data, var, beta_type, title, subtitle){
+  data1 <- data %>%
+  pivot_longer(cols = var,
+               names_to = "type",
+               values_to = "value") %>%
+  mutate(est_model = case_when(str_detect(type, "aaft") ~ "aAFT",
+                               str_detect(type, "afcm") ~ "AFCM",
+                               str_detect(type, "laft") ~ "lAFT",
+                               str_detect(type, "lfcm") ~ "LFCM"))
+
+  # Combine 'n' and 'nS' into wider columns
+  data2 <- data1 %>%
+    # filter(beta_type == !!beta_type) %>%
+    pivot_wider(names_from = c(n, nS), values_from = value, names_sep = "_nS_")
+
+  gt_table <- data2 %>%
+    dplyr::select(-c(beta_type, type)) %>%
+    gt(groupname_col = "family") %>%
+    tab_spanner(label = "N = 100", columns = starts_with("100_")) %>%
+    tab_spanner(label = "N = 200", columns = starts_with("200_")) %>%
+    tab_spanner(label = "N = 500", columns = starts_with("500_")) %>%
+    cols_label(ends_with("nS_50") ~ "nS = 50",
+               ends_with("nS_100") ~ "nS = 100",
+               ends_with("nS_500") ~ "nS = 500") %>%
+   tab_header(title = title, subtitle = subtitle) %>%
+   cols_align(align = "center", columns = everything()) %>%
+   fmt_number(columns = where(is.numeric), decimals = 3) %>%
+   opt_table_outline() %>%
+   opt_row_striping()
+
+  return(gt_table)
+}
+```
+
+
+### Average Out-of-Sample C-index Across Iterations
+
+```{r}
+all_info <- data.frame()
+# Loop through all scenarios and iterations to extract 'info'
+for (scenario in all_results) {
+  for (iteration in scenario) {
+    all_info <- rbind(all_info, iteration$info)
+  }
+}
+
+# Calculate the average C-index Across iterations
+table_cindex <- all_info %>%
+  group_by(b, beta_type, family, n, nS) %>%
+  summarise(
+    AUC_aaft = round(mean(AUC_aaft, na.rm = TRUE), 3),
+    AUC_afcm = round(mean(AUC_afcm, na.rm = TRUE), 3),
+    AUC_laft = round(mean(AUC_laft, na.rm = TRUE), 3),
+    AUC_lfcm = round(mean(AUC_laft, na.rm = TRUE), 3),
+    .groups = "drop"
+  )
+
+# Create summary table
+table_cindex_1 <- create_table(table_cindex, var = c("AUC_aaft", "AUC_afcm", "AUC_laft", "AUC_lfcm"), 
+                               title = "Average Out-of-Sample C-Index Across 100 Simulations",
+                               subtitle = "Beta type: linear")
+table_cindex_1
+
+# boxplot
+plot_cindex <- table_cindex %>%
+  pivot_longer(cols = c("AUC_aaft", "AUC_afcm", "AUC_laft", "AUC_lfcm"),
+               names_to = "type",
+               values_to = "value") %>%
+  mutate(est_model = case_when(str_detect(type, "aaft") ~ "aAFT",
+                               str_detect(type, "afcm") ~ "AFCM",
+                               str_detect(type, "laft") ~ "lAFT",
+                               str_detect(type, "lfcm") ~ "LFCM"))
+plot_cindex %>%
+  ggplot(aes(factor(nS), value, fill = est_model)) + 
+  geom_bar(stat = "identity", position = position_dodge()) +
+  facet_grid(family~n, labeller = label_both) +
+  labs(x = "nS", y = "C-Index", title = "Average Out-of-Sample C-Index Across 100 Simulations")
+```
+
+### Average Out-of-Sample Brier Score Across Iterations
+
+```{r}
+# Calculate the average Brier Score Across iterations
+table_Brier <- all_info %>%
+  group_by(beta_type, family, n, nS) %>%
+  filter(is.finite(Brier_aaft) & is.finite(Brier_afcm) & is.finite(Brier_laft) & is.finite(Brier_lfcm)) %>%
+  summarise(
+    Brier_aaft = round(mean(Brier_aaft, na.rm = TRUE), 3),
+    Brier_afcm = round(mean(Brier_afcm, na.rm = TRUE), 3),
+    Brier_laft = round(mean(Brier_laft, na.rm = TRUE), 3),
+    Brier_lfcm = round(mean(Brier_laft, na.rm = TRUE), 3)
+  )
+
+# Create summary table
+table_Brier_1 <- create_table(table_Brier, var = c("Brier_aaft", "Brier_afcm", "Brier_laft", "Brier_lfcm"),
+                               title = "Average Out-of-Sample Brier Score Across 100 Simulations",
+                               subtitle = "Beta type: linear")
+table_Brier_1
+
+
+# boxplot
+plot_Brier <- table_Brier %>%
+  pivot_longer(cols = c("Brier_aaft", "Brier_afcm", "Brier_laft", "Brier_lfcm"),
+               names_to = "type",
+               values_to = "value") %>%
+  mutate(est_model = case_when(str_detect(type, "aaft") ~ "aAFT",
+                               str_detect(type, "afcm") ~ "AFCM",
+                               str_detect(type, "laft") ~ "lAFT",
+                               str_detect(type, "lfcm") ~ "LFCM"))
+plot_Brier %>%
+  ggplot(aes(factor(nS), value, fill = est_model)) + 
+  geom_bar(stat = "identity", position = position_dodge()) +
+  facet_grid(family~n, labeller = label_both) +
+  labs(x = "nS", y = "Brier Score", title = "Average Brier Score Across 100 Simulations")
+
+# plot_Brier %>%
+#   filter(beta_type == "simple" & nS == 100) %>%
+#   ggplot(aes(factor(n), value, fill = est_model)) + 
+#   geom_bar(stat = "identity", position = position_dodge()) +
+#   facet_grid(~family) +
+#   labs(x = "n", y = "Brier Score", title = "Average Brier Score Across 50 Simulations",
+#        fill = NULL) +
+#   theme(legend.position = "bottom")
+```
+
+
+### MISE for Estimated Coefficient Functions Across Iterations
+```{r}
+all_coef <- data.frame() 
+
+# Loop through all scenarios and iterations to extract 'coef'
+for (scenario in all_results) {
+  for (iteration in scenario) {
+    
+    # Extract data for the current iteration
+    tmp_data <- data.frame(scenario = iteration$info$scenario,
+                           iter = iteration$info$iter,
+                           family = iteration$info$family,
+                           n = iteration$info$n,
+                           nS = iteration$info$nS,
+                           b = iteration$info$b,
+                           #time = time,
+                           beta_type = iteration$info$beta_type,
+                           mise_coef_aaft = mean(iteration$coef$se_coef_aaft, na.rm = TRUE),
+                           mise_coef_afcm = mean(iteration$coef$se_coef_afcm, na.rm = TRUE))
+
+    # Append to all_coef
+    all_coef <- rbind(all_coef, tmp_data)
+  }
+}
+
+# Calculate the average MISE of coefficient function Across iterations
+table_mise_coef <- all_coef %>%
+  group_by(b, beta_type, family, n, nS) %>%
+  summarise(
+    mise_coef_aaft = round(mean(mise_coef_aaft, na.rm = TRUE), 3),
+    mise_coef_afcm = round(mean(mise_coef_afcm, na.rm = TRUE), 3),
+    #mise_coef_sieve = round(mean(mise_coef_sieve, na.rm = TRUE), 3),
+    .groups = "drop"
+  ) 
+
+# Create summary table
+# table_mise_coef_1 <- create_table(table_mise_coef, var = c("mise_coef_norm", "mise_coef_cox"), 
+#                               beta_type = "simple",
+#                               title = "Average MISE of Coefficient Function Across 500 Simulations",
+#                               subtitle = "Beta type: simple")
+# table_mise_coef_1
+# table_mise_coef_2 <- create_table(table_mise_coef, var = c("mise_coef_norm", "mise_coef_cox"), 
+#                               beta_type = "complex",
+#                               title = "Average MISE of Coefficient Function Across 500 Simulations",
+#                                subtitle = "Beta type: complex")
+# table_mise_coef_2
+
+# plot
+plot_mise_coef <- table_mise_coef %>%
+  pivot_longer(cols = c("mise_coef_aaft", "mise_coef_afcm"),
+               names_to = "type",
+               values_to = "value") %>%
+  mutate(est_model = case_when(str_detect(type, "aaft") ~ "aAFT",
+                               str_detect(type, "afcm") ~ "AFCM"))
+
+plot_mise_coef %>%
+  #filter(beta_type == "simple") %>%
+  ggplot(aes(factor(nS), value, fill = est_model)) + 
+  geom_bar(stat = "identity", position = position_dodge()) +
+  facet_grid(family~n, labeller = label_both) +
+  labs(x = "nS", y = "MISE", title = "Average MISE of Coefficient Surface Across 100 Simulations")
+
+# plot_mise_coef %>%
+#   filter(beta_type == "simple" & family != "cox.ph") %>%
+#   ggplot(aes(factor(n), value)) + 
+#   geom_bar(stat = "identity", position = position_dodge()) +
+#   facet_grid(~family) +
+#   labs(x = "n", y = "MISE", title = "Average MISE of Coefficient Function Across 50 Iterations")
+```
+
+
+### MISE for Estimated Survival Functions
+```{r}
+all_surv <- data.frame() 
+
+# Loop through all scenarios and iterations to extract 'coef'
+for (scenario in all_results) {
+  for (iteration in scenario) {
+    # Extract data for the current iteration
+    tmp_data <- data.frame(scenario = iteration$info$scenario,
+                           iter = iteration$info$iter,
+                           family = iteration$info$family,
+                           n = iteration$info$n,
+                           nS = iteration$info$nS,
+                           beta_type = iteration$info$beta_type,
+                           b = iteration$info$b,
+                           mise_surv_aaft = mean(iteration$surv$se_surv_aaft),
+                           mise_surv_afcm = mean(iteration$surv$se_surv_afcm),
+                           mise_surv_laft = mean(iteration$surv$se_surv_laft),
+                           mise_surv_lfcm = mean(iteration$surv$se_surv_lfcm))
+
+    # Append to all_coef
+    all_surv <- rbind(all_surv, tmp_data)
+  }
+}
+
+table_mise_surv <- all_surv %>%
+  group_by(b, beta_type, family, n, nS) %>%
+  summarise(
+    mise_surv_aaft = round(mean(mise_surv_aaft, na.rm = TRUE), 3),
+    mise_surv_afcm = round(mean(mise_surv_afcm, na.rm = TRUE), 3),
+    mise_surv_laft = round(mean(mise_surv_laft, na.rm = TRUE), 3),
+    mise_surv_lfcm = round(mean(mise_surv_lfcm, na.rm = TRUE), 3),
+    .groups = "drop"
+  )
+
+# Create summary table
+table_mise_surv_1 <- create_table(table_mise_surv, var = c("mise_surv_aaft", "mise_surv_afcm", "mise_surv_laft", "mise_surv_lfcm"),
+                              title = "Average MISE of Surivival Function Across 100 Simulations",
+                              subtitle = "Beta type: linear")
+table_mise_surv_1
+# table_mise_surv_2 <- create_table(table_mise_surv, var = c("mise_surv_norm", "mise_surv_cox"), 
+#                               beta_type = "complex",
+#                               title = "Average MISE of Survival Function Across 500 Simulations",
+#                               subtitle = "Beta type: complex")
+# table_mise_surv_2
+
+# boxplot
+plot_surv <- table_mise_surv %>%
+  pivot_longer(cols = c("mise_surv_aaft", "mise_surv_afcm", "mise_surv_laft", "mise_surv_lfcm"),
+               names_to = "type",
+               values_to = "value") %>%
+  mutate(est_model = case_when(str_detect(type, "aaft") ~ "aAFT",
+                               str_detect(type, "afcm") ~ "AFCM",
+                               str_detect(type, "laft") ~ "lAFT",
+                               str_detect(type, "lfcm") ~ "LFCM"))
+
+plot_surv %>%
+  ggplot(aes(factor(nS), value, fill = est_model)) + 
+  geom_bar(stat = "identity", position = position_dodge()) +
+  facet_grid(family~n, labeller = label_both) +
+  labs(x = "nS", y = "MISE", title = "MISE of Estimated Survival Function")   
+
+# plot_surv %>%
+#   filter(beta_type == "simple" & nS == 100) %>%
+#   ggplot(aes(factor(n), value, fill = est_model)) + 
+#   geom_bar(stat = "identity", position = position_dodge()) +
+#   #geom_boxplot() +
+#   facet_grid(~family) +
+#   labs(x = "n", y = "MISE", title = "Average MISE of Survival Function Across 50 Simulations",
+#        fill = NULL) +
+#   theme(legend.position = "bottom")
+```
+
+
+

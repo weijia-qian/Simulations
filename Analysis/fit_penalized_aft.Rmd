@@ -26,24 +26,24 @@ load(here("Source", "dat_func.Rdata"))
 ```{r}
 # Simulate functional survival data
 family <- "lognormal"
-n <- 500   # number of subjects
-nS <- 500   # number of observations
+n <- 100   # number of subjects
+nS <- 100   # number of observations
 beta_type <- "simple"
 beta0_true <- 0.5
-b_true <- 0.5
+b_true <- 0.1
 
 simdata <- simulate_AFT(family = family, n = n, nS =nS, beta_type = beta_type, beta_0 = beta0_true,
                         b = b_true)
-simdata <- simulate_Cox(n = n, nS = nS, beta_type = beta_type)
-saveRDS(simdata, file = "simdata.rds")
+#simdata <- simulate_Cox(n = n, nS = nS, beta_type = beta_type)
+#saveRDS(simdata, file = "simdata.rds")
 
 # Optimize lambda using GCV
-model <- "lognormal"
+model <- "loglogistic"
 lambda_grid <- exp(seq(log(1000), log(10000), length.out = 500))
 best_lambda <- optimize_lambda(Y, delta, X, data = simdata$data, family = model, lambda_grid)
 print(paste("Optimal lambda:", best_lambda))
 
-lambda_list <- c(best_lambda - 10, best_lambda, best_lambda + 10)
+lambda_list <- c(best_lambda - 5, best_lambda, best_lambda + 5)
 #lambda_list <- c(best_lambda)
 for (lambda in lambda_list) {
   # Fit the model
@@ -74,8 +74,8 @@ for (lambda in lambda_list) {
     labs(
       x = "Functional domain (s)",
       y = expression(beta~"(s)"),
-      #title = paste("family =", family, "n =", n, "nS =", nS, "beta_type =", beta_type),
-      #subtitle = paste("model =", model, "lambda =", lambda),
+      title = paste("family =", family, "n =", n, "nS =", nS, "beta_type =", beta_type),
+      subtitle = paste("model =", model, "lambda =", lambda),
       color = NULL,
       fill = NULL
     ) +

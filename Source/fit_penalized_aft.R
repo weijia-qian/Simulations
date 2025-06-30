@@ -27,33 +27,18 @@ optimize_AFT <- function(Y,      # survival time
   Pen <- penalty_matrix(kp = k+1, nS = nS, a = 0.001)
   
   # Optimization
-  if (family == "lognormal"){
-    fit <- optim(
-      par = init_params,
-      fn = penalized_loglik,
-      gr = penalized_score,
-      method = "BFGS",
-      Y = Y,
-      delta = delta,
-      X = C,
-      family = family,
-      lambda = lambda,
-      Pen = Pen,
-      control = list(maxit = 2000))
-    } else if (family == "loglogistic"){
-      fit <- optim(
-        par = init_params,
-        fn = penalized_loglik,
-        #gr = penalized_score,
-        method = "Nelder-Mead",
-        Y = Y,
-        delta = delta,
-        X = C,
-        family = family,
-        lambda = lambda,
-        Pen = Pen,
-        control = list(maxit = 2000))
-    }
+  fit <- optim(
+    par = init_params,
+    fn = penalized_loglik,
+    gr = penalized_score,
+    method = "BFGS",
+    Y = Y,
+    delta = delta,
+    X = C,
+    family = family,
+    lambda = lambda,
+    Pen = Pen,
+    control = list(maxit = 2000))
   
   # Extract estimates
   beta0_hat <- fit$par[1]
@@ -74,13 +59,8 @@ optimize_AFT <- function(Y,      # survival time
   
   if (se == TRUE) {
     # Covariance matrix of beta
-    if (family == "lognormal"){
     hessian <- optimHess(fit$par, fn = penalized_loglik, gr = penalized_score,               
                          Y = Y, delta = delta, X = C, family = family, lambda = lambda, Pen = Pen)
-    } else if (family == "loglogistic"){
-      hessian <- optimHess(fit$par, fn = penalized_loglik, gr = NULL, 
-                           Y = Y, delta = delta, X = C, family = family, lambda = lambda, Pen = Pen)
-    }
     cov_beta <- solve(hessian)
     
     # Compute standard error for beta0, beta1, b
@@ -138,8 +118,12 @@ penalized_loglik <- function(params, Y, delta, X, family, lambda, Pen) {
     log_f <- delta * (-log(Y) - log(b) - 0.5 * z^2 - 0.5 * log(2 * pi))
     log_S <- (1 - delta) * log(1 - pnorm(z))
   } else if (family == "loglogistic"){
-    log_f <- delta * (log(dlogis(z)) - log(b))
-    log_S <- (1 - delta) * log(1 - plogis(z))
+    p_z <- 1 / (1 + exp(-z)) # logistic cdf
+    log_f <- delta * log((1 / (b * Y)) * p_z * (1 - p_z))
+    log_S <- (1 - delta) * log(1 - p_z)
+    # # guard against zeros in log()
+    # f <- pmax(f, .Machine$double.eps)
+    # S <- pmax(S, .Machine$double.eps)
   }
   
   # Penalized log-likelihood
@@ -175,26 +159,19 @@ penalized_score <- function(params, Y, delta, X, family, lambda, Pen) {
     # Score for b
     score_b <- sum(delta * (-1 / b + z^2 / b) + (1 - delta) * f_z * z / (b * S_z))
     
-  # }
-  # else if (family == "loglogistic"){
-  #   # Log-logistic components
-  #   f_z <- dlogis(z) / b  # PDF of z
-  #   S_z <- plogis(-z)  # survival function of z
-  #   
-  #   # Score for beta
-  #   score_beta <- -(t(X) %*% (delta - (1 - S_z)) / b - 2 * lambda * Pen %*% beta_coef)
-  #   
-  #   # Score for b
-  #   term1 <- -sum(delta / b)
-  #   term2 <- sum(delta * mu / b^2)
-  #   term3 <- -sum((mu + log(Y)) / b^2 * f_z)
-  #   term4 <- -sum((1 - delta) * (mu + log(Y)) / b^2 * (1 - S_z))
-  #   
-  #   score_b <- -(term1 + term2 + term3 + term4)
-  # }
+  }
+  else if (family == "loglogistic"){
+    # Logistic CDF
+    p_z <- 1 / (1 + exp(-z))
+    
+    # Score for beta
+    score_beta <-  crossprod(X, delta * (2 * p_z - 1) + (1 - delta) * p_z) / b - 2 * lambda * Pen %*% beta_coef
+    
+    # Score for b
+    score_b <- sum(- delta + delta * (2*p_z - 1) * z + (1 - delta) * p_z * z) / b
+  }
 
   return(-c(score_beta, score_b)) # negative score for minimization
-  }
 }
 
 

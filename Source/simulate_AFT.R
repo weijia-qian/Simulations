@@ -8,7 +8,7 @@ simulate_AFT = function(data = dat_func,
                         beta_0 = 0.5,
                         b = 0.1,
                         u = 250,
-                        seed = 916,
+                        seed = NULL,
                         output = "wide"){
   
   if (beta_type == "simple") {
@@ -18,6 +18,11 @@ simulate_AFT = function(data = dat_func,
     k = 8
     bs_coef = c(0, 0.4, 0.2, 0.2, 0.2, 0.6, 0.3, 0)
     #bs_coef = c(-1, 0.5, -0.7, -0.4, 0.8, -0.5, 0.9, -0.6)
+  }
+  
+  if (is.null(seed)) {
+    # sample an integer between 1 and .Machine$integer.max
+    seed <- sample.int(.Machine$integer.max, 1)
   }
   
   # FPCA on real data
