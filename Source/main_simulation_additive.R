@@ -56,7 +56,7 @@ params = expand.grid(seed_start = seed_start,
 
 ## define number of simulations and parameter scenarios
 if(doLocal) {
-  scenario = 1
+  scenario = 2
   N_iter = 1
 }else{
   # defined from batch script params
