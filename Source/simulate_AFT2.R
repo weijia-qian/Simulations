@@ -50,7 +50,7 @@ simulate_AFT2 = function(data = dat_func,
   }else if(beta_type == "const"){
     beta <- function(X, s) -X*0.1
   }else if(beta_type == "nonlinear1"){
-    beta <- function(X, s) (0.1*X^2)*s
+    beta <- function(X, s) (0.5*X^2)*0.1*s
   }else if(beta_type == "nonlinear2"){
     beta <- function(X, s) sin(-X*s)
   }

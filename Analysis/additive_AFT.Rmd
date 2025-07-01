@@ -37,7 +37,7 @@ source(here::here("Source", "simulate_AFT2.R"))
 source(here::here("Source", "calc_auc_brier.R"))
 simdata1 <- simulate_AFT2(n=100, beta_type = "const", u = 20, beta_0 = 0.5)
 simdata2 <- simulate_AFT2(n=100, beta_type = "linear", u = 2000, beta_0 = 0.5)
-simdata3 <- simulate_AFT2(n=100, beta_type = "nonlinear1", u = 20000, beta_0 = 0.5)
+simdata3 <- simulate_AFT2(n=100, beta_type = "nonlinear1", u = 2000, beta_0 = 0.5, b = 0.5)
 summary(simdata3$data$t)
 mean(simdata3$data$delta)
 ```
@@ -109,7 +109,7 @@ filled.contour(x = sind, y = xind, z = df_surface,
 
 ```{r}
 ## derive true surface based on the formula of F(x, s)
-real_coef <- t((0.1*xind)^2 %*% t(sind))
+real_coef <- t((0.5*xind)^2 %*% t(0.1*sind))
 
 filled.contour(x = sind, y = xind, z = real_coef,
                color.palette = topo.colors,

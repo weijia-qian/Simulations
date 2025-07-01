@@ -40,9 +40,9 @@ load(here("Source", "dat_func.Rdata")) # load real data
 ## set simulation design elements
 ###############################################################
 family = c("lognormal", "loglogistic")
-n = c(100, 200, 500)
+n = c(200)
 nS = c(50, 100, 500)
-beta_type = c('linear')
+beta_type = c('nonlinear1')
 b = c(0.5)
 seed_start = 1000
 N_iter = 100
@@ -57,7 +57,7 @@ params = expand.grid(seed_start = seed_start,
 ## define number of simulations and parameter scenarios
 if(doLocal) {
   scenario = 1
-  N_iter = 2
+  N_iter = 1
 }else{
   # defined from batch script params
   scenario <- as.numeric(commandArgs(trailingOnly=TRUE))
@@ -77,7 +77,7 @@ results = vector("list", length = N_iter)
 
 # simulate a test dataset
 if(family %in% c("lognormal", "loglogistic")){
-  sim_data_test <- simulate_AFT2(family = family, n = n, nS = nS, beta_type = beta_type, b = b, u = 150, seed = SEED.START)
+  sim_data_test <- simulate_AFT2(family = family, n = n, nS = nS, beta_type = beta_type, b = b, u = 2000, seed = SEED.START)
 }else{
   sim_data_test <- simulate_afcm(n = n, nS = nS, beta_type = beta_type, seed = SEED.START)
 }
@@ -89,7 +89,7 @@ for(iter in 1:N_iter){
 
   # simulate data
   if(family %in% c("lognormal", "loglogistic")){
-    sim_data <- simulate_AFT2(family = family, n = n, nS = nS, beta_type = beta_type, b = b, u = 150, seed = seed.iter)
+    sim_data <- simulate_AFT2(family = family, n = n, nS = nS, beta_type = beta_type, b = b, u = 2000, seed = seed.iter)
   }else{
     sim_data <- simulate_afcm(n = n, nS = nS, beta_type = beta_type, seed = seed.iter)
   }
@@ -111,13 +111,13 @@ for(iter in 1:N_iter){
   
   # linear functional log-normal AFT model
   tic()
-  fit.laft <- gam(logY ~ 1 + s(S, by = X_L, bs = "ps", k = 30), family = cnorm(), data = sim_data$data)
+  fit.laft <- gam(logY ~ 1 + s(S, by = X_L, bs = "ps", k = 20), family = cnorm(), data = sim_data$data)
   time_stamp <- toc(quiet = TRUE)
   time.laft <- time_stamp$toc - time_stamp$tic
   
   # linear functional Cox model
   tic()
-  fit.lfcm <- gam(Y ~ s(S, by = X_L, bs = "ps", k = 30), weights = delta, family = cox.ph(), data = sim_data$data)
+  fit.lfcm <- gam(Y ~ s(S, by = X_L, bs = "ps", k = 20), weights = delta, family = cox.ph(), data = sim_data$data)
   time_stamp <- toc(quiet = TRUE)
   time.lfcm <- time_stamp$toc - time_stamp$tic
   
@@ -184,8 +184,8 @@ for(iter in 1:N_iter){
   AUC_lfcm <- cal_c(marker = eta_lfcm, Stime = time_test, status = event_test)
   
   ## calculate the brier score
-  tmax_test <- round(quantile(sim_data_test$data$t, 0.99))
-  tgrid_test <- seq(0, tmax_test, length.out = 1000)
+  #tmax_test <- round(quantile(sim_data_test$data$Y, 0.99))
+  tgrid_test <- seq(0, 2000, length.out = 1000)
   
   S_aaft <- cal_stime(fit = fit.aaft, data = sim_data_test$data, tgrid = tgrid_test, family = 'lognormal')
   S_afcm <- cal_stime(fit = fit.afcm, data = sim_data_test$data, tgrid = tgrid_test, family = 'cox.ph')
