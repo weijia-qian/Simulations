@@ -11,6 +11,8 @@ suppressPackageStartupMessages(library(MASS))
 suppressPackageStartupMessages(library(mgcv))
 suppressPackageStartupMessages(library(scam))
 suppressPackageStartupMessages(library(splines))
+suppressPackageStartupMessages(library(survival))
+suppressPackageStartupMessages(library(refund))
 suppressPackageStartupMessages(library(tictoc))
 suppressPackageStartupMessages(library(tidyverse))
 
