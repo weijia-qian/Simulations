@@ -6,15 +6,11 @@
 # and fits functional AFT and Cox models
 ####################################################################
 
-#suppressPackageStartupMessages(library(caret))
-#suppressPackageStartupMessages(library(fda))
 suppressPackageStartupMessages(library(here))
 suppressPackageStartupMessages(library(MASS))
 suppressPackageStartupMessages(library(mgcv))
-suppressPackageStartupMessages(library(refund))
 suppressPackageStartupMessages(library(scam))
 suppressPackageStartupMessages(library(splines))
-suppressPackageStartupMessages(library(survival))
 suppressPackageStartupMessages(library(tictoc))
 suppressPackageStartupMessages(library(tidyverse))
 
