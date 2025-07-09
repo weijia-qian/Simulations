@@ -1,16 +1,13 @@
 ### Simulate survival data from Cox model
-
-simulate_Cox = function(data = dat_func,
-                        beta_type = "simple",
-                        n = 500,
+simulate_Cox2 = function(data = dat_func,
+                        beta_type = "nonlinear1",
+                        n = 200,
                         npc = 5,
-                        tmax = 120,
+                        tmax = 2000,
                         range_s = 1,
                         nS = 401,
-                        u = 120,
+                        u = 1500,
                         seed = 916){
-  
-  set.seed(seed)
   
   ### 1. Simulate new curves Xi(s)
   # FPCA on real data
@@ -35,6 +32,7 @@ simulate_Cox = function(data = dat_func,
   eigenvalues <- fpca.results$evalues / nS
   
   # simulate new scores from MVN
+  set.seed(seed)
   sim_scores <- mvrnorm(n = n, mu = rep(0, npc), Sigma = diag(eigenvalues[1:npc]))
   mu <- matrix(rep(fpca.results$mu, n), nrow = n, byrow = TRUE)
   
@@ -47,12 +45,11 @@ simulate_Cox = function(data = dat_func,
   # quadrature weights for Riemann integration
   lvec <- matrix(1 / nS, nS, 1) 
   # matrix containing quadrature weights for all participants
-  L <- kronecker(matrix(1, nrow(df_wide), 1), t(lvec))
+  df_wide$L <- kronecker(matrix(1, nrow(df_wide), 1), t(lvec))
   # matrix containing functional domain values
-  S <- kronecker(matrix(1, nrow(df_wide), 1), t(sgrid))
-  df_wide$S <- I(S)
+  df_wide$S <- kronecker(matrix(1, nrow(df_wide), 1), t(sgrid))
   # pointwise product of w_i(s) and the quadrature weights, "L"
-  df_wide$X_L <- I(df_wide$X * L)
+  df_wide$X_L <- I(df_wide$X * df_wide$L)
   fit <- gam(time_delay ~ s(S, by = X_L, bs = "bs", k = 30), data = df_wide, 
              weights = use_num, family = cox.ph)
 
@@ -61,7 +58,7 @@ simulate_Cox = function(data = dat_func,
   t0 <- rev(fit$family$data$tr) 
   H0_hat <- rev(fit$family$data$h) 
   # smooth while imposing non-decreasing shape constraints 
-  H0_fit <- scam(log(H0_hat + 1e-6) ~ s(t0, bs = "mpi") - 1) 
+  H0_fit <- scam(log(H0_hat+1e-8) ~ s(t0, bs = "mpi") - 1) 
   #H0_fit <- scam(H0_hat ~ s(t0, bs = "mpi") - 1) 
   # set the time grid to evaluate cumulative baseline hazard 
   tgrid <- seq(0, tmax, len = 1000) 
@@ -73,27 +70,27 @@ simulate_Cox = function(data = dat_func,
   df_sim <- data.frame(X = I(sim_curves), 
                        L = I(matrix(1 / nS, ncol = nS, nrow = n)), 
                        S = I(matrix(sgrid, ncol = nS, nrow = n, byrow = TRUE)))
-  df_sim$X_L = I(df_sim$X * df_sim$L)
-  if (beta_type == "simple"){
-    beta <- function(s) 0.3 - (s - 0.2)^2
-    eta_i <- sim_curves %*% beta(sgrid) * (range_s / nS)
-  } else {
-    #beta <- function(s) -0.3 + cos(10 * s)
-    eta_i <- predict(fit, newdata = df_sim, type = "terms")
+
+  if (beta_type == "nonlinear1"){
+    beta <- function(x, s) -0.05*x^2*s
+    eta_i <- as.matrix(apply(sim_curves, 1, function(x) sum(beta(x = x, s = sgrid))* (range_s / nS)), ncol = 1)
   }
   
   ### 5. Estimate the survival function 
   Si <- exp(-(exp(eta_i) %*% H0_prd))
 
   ### 6. Simulate survival times 
+  set.seed(seed)
   U <- runif(n) 
   Ti <- rep(NA, n) 
   for(i in 1:n){ 
     if(all(Si[i,] > U[i])){Ti[i] <- max(tgrid) + 1} 
     else{Ti[i] <- tgrid[min(which(Si[i,] < U[i]))]} 
   }
+  #summary(Ti)
 
   ### 7. Simulate censoring times from uniform (0, u)
+  set.seed(seed)
   Ci <- runif(n, 0, u)
   Yi <- pmin(Ci, Ti) # observed time to event 
   di <- as.numeric(Ti <= Ci) # binary event indicator
@@ -108,24 +105,21 @@ simulate_Cox = function(data = dat_func,
                        t = Ti,
                        C = Ci,
                        delta = di,
-                       X = I(sim_curves),
-                       X_L = I(df_sim$X_L),
+                       X = I(df_sim$X),
+                       L = I(df_sim$L),
+                       X_L = I(df_sim$X * df_sim$L),
                        S = I(df_sim$S),
                        lp = eta_i,
                        logY = I(logY),
                        Si = I(Si))
   
   # save true coefficient functions
-  if (beta_type == "simple"){
-    df_coef = data.frame(time = sgrid,
-                         beta1 = beta(sgrid)
-                         )
-  } else {
-    df_coef = data.frame(time = sgrid,
-                         beta1 = as.numeric(predict(fit, newdata = data.frame(S = sgrid, X_L = 1), type = "terms"))
-                         )
-  }
+  # if (beta_type == "nonlinear1"){
+  #   df_coef = data.frame(time = sgrid,
+  #                        beta1 = beta(sgrid)
+  #                        )
+  # }
   
-  return(list(data = sim_data_wide, coefficients = df_coef, family = "cox.ph"))
+  return(list(data = sim_data_wide, beta_type = beta_type, family = family, beta = beta))
 
 }

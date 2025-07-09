@@ -14,9 +14,12 @@ simulate_AFT = function(data = dat_func,
   if (beta_type == "simple") {
     k = 6
     bs_coef = c(0, -1, -0.5, 0.25, 0.25, 0.25)
-  } else {
+    u = 250
+  } else  if (beta_type == "complex") {
     k = 8
-    bs_coef = c(0, 0.4, 0.2, 0.2, 0.2, 0.6, 0.3, 0)
+    bs_coef = c(0, -0.6, -1.2, 0.6, -0.5, 1, 0.5, 0)
+    u = 35
+    #bs_coef = c(0, 0.4, 0.2, 0.2, 0.2, 0.6, 0.3, 0)
     #bs_coef = c(-1, 0.5, -0.7, -0.4, 0.8, -0.5, 0.9, -0.6)
   }
   
@@ -24,6 +27,7 @@ simulate_AFT = function(data = dat_func,
     # sample an integer between 1 and .Machine$integer.max
     seed <- sample.int(.Machine$integer.max, 1)
   }
+  set.seed(seed)
   
   # FPCA on real data
   df_wide <- pivot_wider(subset(data, select = -seconds), names_from = frame, values_from = percent_change, 
@@ -47,13 +51,12 @@ simulate_AFT = function(data = dat_func,
   eigenvalues <- fpca.results$evalues / nS
   
   # simulate new scores from MVN
-  set.seed(seed)
   sim_scores <- mvrnorm(n = n, mu = rep(0, npc), Sigma = diag(eigenvalues[1:npc]))
   mu <- matrix(rep(fpca.results$mu, n), nrow = n, byrow = TRUE)
   
   # generate new curves based on FPCs and new scores
   sim_curves <- mu + sim_scores %*% t(Phi[, 1:npc])
-  sim_curves[,1] <- 0 # assign the initial value to zero
+  sim_curves[, 1] <- 0 # assign the initial value to zero
   
   # define basis
   sgrid <- seq(0, tmax, length.out = nS) # observed points on the functional domain
@@ -65,7 +68,6 @@ simulate_AFT = function(data = dat_func,
   num_int <- sim_curves %*% beta_1 * (tmax / nS)
   
   # simulate z_i from logistic(0,1)
-  set.seed(seed)
   if (family == "loglogistic"){
     z <- rlogis(n)
   } else if (family == "lognormal"){
@@ -83,8 +85,6 @@ simulate_AFT = function(data = dat_func,
   t <- exp(lp + b * z)
   
   # simulate censoring times from uniform (0, u)
-  set.seed(seed)
-  #C <- runif(n, 40, u)
   C <- runif(n, 0, u)
   
   # obtain observed survival times (Y)

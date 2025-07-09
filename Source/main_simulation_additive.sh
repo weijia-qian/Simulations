@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --array=2%1
+#SBATCH --array=1-9%9
 #SBATCH --job-name=simulation_job
 #SBATCH --partition=wrobel
 #SBATCH --output=main_simulation_additive.out

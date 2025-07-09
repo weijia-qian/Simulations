@@ -4,9 +4,9 @@ optimize_AFT <- function(Y,      # survival time
                          X,      # matrix of functional covariate
                          data,   # name of dataset
                          family, # "lognormal" or "loglogistic"
-                         k = 30, # number of spline basis to construct beta1(s)
+                         k = 20, # number of spline basis to construct beta1(s)
                          lambda,  # smoothing parameter
-                         se = FALSE
+                         se = FALSE # confidence intervals for parameters
                          ) {
   
   # Extract elements
@@ -49,13 +49,7 @@ optimize_AFT <- function(Y,      # survival time
   
   # Compute GCV
   beta_hat <- fit$par[1:(k+1)]
-  GCV <- gcv_lognormal(Y, delta, C, beta_hat, b_hat, lambda, Pen)
-  # #S_matrix <- solve(t(C) %*% C + 2 * lambda * Pen) %*% t(C)
-  # S_matrix <- C %*% solve(t(C) %*% C + 2 * lambda * Pen) %*% t(C)
-  # tr_S <- sum(diag(S_matrix))
-  # n <- length(Y)
-  # #GCV <- (RSS/n) / (1 - tr_S/n)^2
-  # GCV <- RSS / (1 - tr_S/n)^2
+  GCV <- compute_gcv(Y, delta, C, mu_hat, b_hat, lambda, Pen, family)
   
   if (se == TRUE) {
     # Covariance matrix of beta
@@ -76,12 +70,12 @@ optimize_AFT <- function(Y,      # survival time
     b_ci_lower <- b_hat - qnorm(0.975) * se_b
     b_ci_upper <- b_hat + qnorm(0.975) * se_b
     
-    return(list(beta0_hat = beta0_hat, beta1_hat = beta1_hat, b_hat = b_hat, lp = mu_hat, GCV = GCV, 
+    return(list(beta0_hat = beta0_hat, beta1_hat = beta1_hat, b_hat = b_hat, lp = mu_hat, GCV = GCV,
                 family = family, lambda = lambda, beta0_ci_lower = beta0_ci_lower, beta0_ci_upper = beta0_ci_upper,
                 beta1_ci_lower = beta1_ci_lower, beta1_ci_upper = beta1_ci_upper, b_ci_lower = b_ci_lower, b_ci_upper = b_ci_upper))
   } else {
     
-    return(list(beta0_hat = beta0_hat, beta1_hat = beta1_hat, b_hat = b_hat, lp = mu_hat, GCV = GCV, 
+    return(list(beta0_hat = beta0_hat, beta1_hat = beta1_hat, b_hat = b_hat, lp = mu_hat, GCV = GCV,
                 family = family, lambda = lambda))
   }
 }
@@ -186,36 +180,88 @@ optimize_lambda <- function(Y, delta, X, data, family, lambda_grid) {
   return(optimal_lambda)
 }
 
-loglik_lognormal <- function(beta, b, Y, delta, mu) {
-  z <- (log(Y) - mu) / b
-  log_f <- dnorm(z, log = TRUE) - log(Y * b)
-  log_S <- pnorm(z, lower.tail = FALSE, log.p = TRUE)
-  sum(delta * log_f + (1 - delta) * log_S)
-}
-
-compute_weights <- function(Y, delta, mu, b) {
-  z <- (log(Y) - mu) / b
-  phi_z <- dnorm(z)
-  S_z <- pnorm(z, lower.tail = FALSE)
-  w <- numeric(length(Y))
-  w[delta == 1] <- 1 / b^2
-  w[delta == 0] <- (phi_z[delta == 0]^2) / (S_z[delta == 0]^2 * b^2)
-  return(w)
-}
-
-compute_df <- function(C, w, Pen, lambda) {
+##### Function to compute GCV value #####
+compute_gcv <- function(Y, delta, C, mu_hat, b_hat, lambda, Pen, family = c("lognormal", "loglogistic")) {
+  family <- match.arg(family)
+  n <- length(Y)
+  
+  # Log-likelihood
+  loglik <- switch(family,
+                   "lognormal" = {
+                     z <- (log(Y) - mu_hat) / b_hat
+                     log_f <- dnorm(z, log = TRUE) - log(Y * b_hat)
+                     log_S <- pnorm(z, lower.tail = FALSE, log.p = TRUE)
+                     sum(delta * log_f + (1 - delta) * log_S)
+                   },
+                   "loglogistic" = {
+                     z <- (log(Y) - mu_hat) / b_hat
+                     log_f <- log(1 / b_hat) - log(Y) - 2 * log(1 + exp(-z))
+                     log_S <- -log(1 + exp(z))
+                     sum(delta * log_f + (1 - delta) * log_S)
+                   }
+  )
+  
+  # Weights for DF calculation (approximate second derivatives)
+  w <- switch(family,
+              "lognormal" = {
+                z <- (log(Y) - mu_hat) / b_hat
+                phi_z <- dnorm(z)
+                S_z <- pnorm(z, lower.tail = FALSE)
+                w <- numeric(n)
+                w[delta == 1] <- 1 / b_hat^2
+                w[delta == 0] <- (phi_z[delta == 0]^2) / (S_z[delta == 0]^2 * b_hat^2)
+                w
+              },
+              "loglogistic" = {
+                z <- (log(Y) - mu_hat) / b_hat
+                # Approximate weight as derivative of log-hazard:
+                p <- exp(z) / (1 + exp(z))  # derivative of log(1 + exp(z)) is logistic
+                w <- numeric(n)
+                w[delta == 1] <- 1 / b_hat^2  # constant approx
+                w[delta == 0] <- (p[delta == 0]^2) / b_hat^2  # rough approx
+                w
+              }
+  )
+  
+  # Degrees of freedom
   W <- diag(w)
   XtWX <- t(C) %*% W %*% C
   H <- solve(XtWX + lambda * Pen, XtWX)
-  sum(diag(H))
+  df <- sum(diag(H))
+  
+  # GCV
+  gcv <- -loglik / (1 - df / n)^2
+  return(gcv)
 }
 
-gcv_lognormal <- function(Y, delta, C, beta_hat, b_hat, lambda, Pen) {
-  mu_hat <- C %*% beta_hat
-  ll <- loglik_lognormal(beta_hat, b_hat, Y, delta, mu_hat)
-  w <- compute_weights(Y, delta, mu_hat, b_hat)
-  df <- compute_df(C, w, Pen, lambda)
-  n <- length(Y)
-  gcv <- -ll / (1 - df / n)^2
-  return(gcv)
+##### Function to return the linear predictor for new obs #####
+predict_AFT <- function(fit, newdata) {
+  
+  # extract new X
+  X_new <- newdata$X
+  if (is.null(X_new)) stop("`newdata` must have an element named `X`.")
+  if (!is.matrix(X_new)) X_new <- as.matrix(X_new)
+  
+  # extract AFT parameters
+  beta0 <- fit$beta0_hat
+  beta1 <- fit$beta1_hat
+  
+  # check dimensions
+  nS <- ncol(X_new)
+  if (length(beta1) != nS) {
+    warning(sprintf(
+      "Length of beta1_hat (%d) does not match # columns of newdata$X (%d).",
+      length(beta1), nS
+    ))
+  }
+  
+  # compute linear predictor
+  mu_new <- as.vector(beta0 + (X_new %*% beta1) / nS)
+  
+  # preserve row names if present
+  if (!is.null(rownames(X_new))) {
+    names(mu_new) <- rownames(X_new)
+  }
+  
+  return(mu_new)
 }

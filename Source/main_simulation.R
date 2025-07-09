@@ -44,14 +44,12 @@ load(here("Source", "dat_func.Rdata")) # load real data
 family = c("lognormal", "loglogistic", "cox.ph")
 n = c(100, 200, 500)
 nS = c(50, 100, 500)
-#nS = c(100)
 beta_type = c('simple', 'complex')
 b = c(0.5)
 seed_start = 1000
 N_iter = 500
 
-params = expand.grid(seed_start = seed_start,
-                     family = family,
+params = expand.grid(family = family,
                      n = n,
                      nS = nS,
                      beta_type = beta_type,
@@ -59,8 +57,8 @@ params = expand.grid(seed_start = seed_start,
 
 ## define number of simulations and parameter scenarios
 if(doLocal) {
-  scenario = 9
-  N_iter = 1
+  scenario = 44
+  N_iter = 5
 }else{
   # defined from batch script params
   scenario <- as.numeric(commandArgs(trailingOnly=TRUE))
@@ -71,7 +69,6 @@ family = params$family[scenario]
 nS = params$nS[scenario]
 beta_type = params$beta_type[scenario]
 b = params$b[scenario]
-SEED.START = params$seed_start[scenario]
 
 ###############################################################
 ## run simulations
@@ -80,15 +77,15 @@ results = vector("list", length = N_iter)
 
 # simulate a test dataset
 if(family %in% c("lognormal", "loglogistic")){
-  sim_data_test <- simulate_AFT(family = family, n = n, nS = nS, beta_type = beta_type, b = b, seed = SEED.START)
+  sim_data_test <- simulate_AFT(family = family, n = n, nS = nS, beta_type = beta_type, b = b, seed = seed_start)
 }else{
-  sim_data_test <- simulate_Cox(n = n, nS = nS, beta_type = beta_type, seed = SEED.START)
+  sim_data_test <- simulate_Cox(n = n, nS = nS, beta_type = beta_type, seed = seed_start)
 }
 
 for(iter in 1:N_iter){
   print(iter)
   # set seed
-  seed.iter = (SEED.START - 1) * N_iter + iter
+  seed.iter = (seed_start - 1) * N_iter + iter
 
   # simulate data
   if(family %in% c("lognormal", "loglogistic")){
@@ -100,12 +97,17 @@ for(iter in 1:N_iter){
   ###############################################################
   ## fit functional AFT and Cox model
   ###############################################################
-  # linear functional log-normal AFT model
-  time.norm <- as.numeric(system.time(fit.norm <- gam(logY ~ 1 + s(S, by = X_L, bs = "ps", k = 30), 
-                                                      family = cnorm(), data = sim_data$data))[3])
+  # linear functional lognormal AFT model
+  tic()
+  fit.norm <- gam(logY ~ 1 + s(S, by = X_L, bs = "ps", k = 20), family = cnorm(), data = sim_data$data)
+  time_stamp <- toc(quiet = TRUE)
+  time_norm <- time_stamp$toc - time_stamp$tic
+  
   # linear functional Cox model
-  time.cox <- as.numeric(system.time(fit.cox <- gam(Y ~ s(S, by = X_L, bs = "ps", k = 30), data = sim_data$data, 
-                                                        weights = delta, family = cox.ph))[3])
+  tic()
+  fit.cox <- gam(Y ~ s(S, by = X_L, bs = "ps", k = 20), weights = delta, family = cox.ph(), data = sim_data$data)
+  time_stamp <- toc(quiet = TRUE)
+  time_cox <- time_stamp$toc - time_stamp$tic
   
   # lognormal lfAFT
   tic()
@@ -118,7 +120,6 @@ for(iter in 1:N_iter){
   
   # loglogistic lfAFT
   tic()
-  lambda_grid <- exp(seq(log(1000), log(10000), length.out = 500))
   model <- "loglogistic"
   best_lambda <- optimize_lambda(Y, delta, X, data = sim_data$data, family = model, lambda_grid)
   fit.faft2 <- optimize_AFT(Y, delta, X, data = sim_data$data, family = model, lambda = best_lambda, se = TRUE)
@@ -128,58 +129,17 @@ for(iter in 1:N_iter){
   ###############################################################
   ## Out-of-sample Harrell’s C-index and Brier score
   ###############################################################
-  
   # survival time and status
   time_train <- sim_data$data$Y
   event_train <- sim_data$data$delta
   time_test <- sim_data_test$data$Y
   event_test <- sim_data_test$data$delta
 
-  # get unique ordered survival times
-  ut_train <- unique(time_train[event_train == 1])
-  ut_train <- ut_train[order(ut_train)]
-  ut_test <- unique(time_test[event_test == 1])
-  ut_test <- ut_test[order(ut_test)]
-  
-  # derive the KM estimate of the censoring time
-  ut_train_censor <- unique(time_train[event_train == 0])
-  ut_train_censor <- ut_train_censor[order(ut_train_censor)]
-  ut_test_censor <- unique(time_test[event_test == 0])
-  ut_test_censor <- ut_test_censor[order(ut_test_censor)]
-  # get KM estimates of censoring time for train data
-  KM_train_censor <- unique(survfit(Surv(time_train,1-event_train) ~ 1)$surv)
-  # get KM estimates of censoring time for test data where test and training overlap
-  # impute linearly on the log scale for survival times which are not in the training dataset
-  KM_test_censor  <- rep(NA, length(ut_test_censor))
-  for(i in seq_along(ut_test_censor)){
-    # if test data survival time less than the minimum observed event time in the training dataset
-    # impute survival time on the linearly log scale
-    if(ut_test_censor[i] < min(ut_train_censor)){
-      KM_test_censor[i] <- exp(log(1) - (log(1) - log(KM_train_censor[1])) / (ut_train_censor[1]-0) * (ut_test_censor[1]-0))
-    }
-    # if test data survival time within the observed range of event times in the training dataset,
-    # either use the KM estimate (if the training time is in the test times), or impute linearly on the log scale
-    if(ut_test_censor[i] >= min(ut_train_censor) & ut_test_censor[i] < max(ut_train_censor)){
-      inx_l <- max(which(ut_train_censor <= ut_test_censor[i]))
-      inx_r <- min(which(ut_train_censor > ut_test_censor[i]))
-      st_l <- KM_train_censor[inx_l]
-      st_r <- KM_train_censor[inx_r]
-      t_l <- ut_train_censor[inx_l]
-      t_r <- ut_train_censor[inx_r]
-      KM_test_censor[i] <- exp(log(st_l) - (log(st_l) - log(st_r))/(t_r -t_l)  * (ut_test_censor[i] - t_l))
-    }
-    # if the test data survival time is beyond the observe range of event times in the training dataset,
-    # use the last observed survival probability
-    if(ut_test_censor[i] >= max(ut_train_censor)){
-      KM_test_censor[i] <- min(KM_train_censor)
-    }
-  }
-
   ## obtain linear predictors
   eta_norm <- predict(fit.norm, sim_data_test$data, type = "response")
   eta_cox <- rowSums(predict(fit.cox, sim_data_test$data, type = "terms"))
-  eta_faft <- fit.faft$lp
-  eta_faft2 <- fit.faft2$lp
+  eta_faft <- predict_AFT(fit.faft, sim_data_test$data)
+  eta_faft2 <- predict_AFT(fit.faft2, sim_data_test$data)
   
   ## calculate c-index
   AUC_norm <- cal_c(marker = -eta_norm, Stime = time_test, status = event_test)
@@ -188,19 +148,19 @@ for(iter in 1:N_iter){
   AUC_faft2 <- cal_c(marker = -eta_faft2, Stime = time_test, status = event_test)
   
   ## calculate the brier score
-  tmax_test <- round(quantile(sim_data_test$data$t, 0.99))
+  tmax_test <- 120
   tgrid_test <- seq(0, tmax_test, length.out = 1000)
   
   S_norm <- cal_stime(fit = fit.norm, data = sim_data_test$data, tgrid = tgrid_test, family = 'lognormal')
   S_cox <- cal_stime(fit = fit.cox, data = sim_data_test$data, tgrid = tgrid_test, family = 'cox.ph')
-  lp_faft <- as.numeric(fit.faft$lp)
+  eta_faft <- as.numeric(eta_faft)
   scale_faft <- fit.faft$b_hat
-  S_faft <- outer(lp_faft, tgrid_test, 
-                  function(lp_faft_i, tgrid_test_j) pnorm((log(tgrid_test_j) - lp_faft_i) / scale_faft, lower.tail = FALSE))
-  lp_faft2 <- as.numeric(fit.faft2$lp)
+  S_faft <- outer(eta_faft, tgrid_test, 
+                  function(eta_faft_i, tgrid_test_j) pnorm((log(tgrid_test_j) - eta_faft_i) / scale_faft, lower.tail = FALSE))
+  eta_faft2 <- as.numeric(eta_faft2)
   scale_faft2 <- fit.faft2$b_hat
-  S_faft2 <- outer(lp_faft2, tgrid_test, 
-                  function(lp_faft2_i, tgrid_test_j) pnorm((log(tgrid_test_j) - lp_faft2_i) / scale_faft2, lower.tail = FALSE))
+  S_faft2 <- outer(eta_faft2, tgrid_test, 
+                   function(eta_faft2_i, tgrid_test_j) 1 / (1 + exp((log(tgrid_test_j) - eta_faft2_i) / scale_faft2)))
   
   Brier_norm <- cal_Brier(S_norm, Stime = time_test, status = event_test, tgrid = tgrid_test)
   Brier_cox <- cal_Brier(S_cox, Stime = time_test, status = event_test, tgrid = tgrid_test)
@@ -218,17 +178,10 @@ for(iter in 1:N_iter){
   coef.est.norm <- predict(fit.norm, newdata = df_pred, type = "terms", se.fit = TRUE)
   coef.est.cox <- predict(fit.cox, newdata = df_pred, type = "terms", se.fit = TRUE)
   
-  if (family %in% c("lognormal", "loglogistic")) {
-    se.coef.norm <- (coef.true - coef.est.norm[[1]])^2
-    se.coef.cox <- (-coef.true - coef.est.cox[[1]])^2
-    se.coef.faft <- (coef.true - fit.faft$beta1_hat)^2
-    se.coef.faft2 <- (coef.true - fit.faft2$beta1_hat)^2
-  } else {
-    se.coef.norm <- (-coef.true - coef.est.norm[[1]])^2
-    se.coef.cox <- (coef.true - coef.est.cox[[1]])^2
-    se.coef.faft <- (-coef.true - fit.faft$beta1_hat)^2
-    se.coef.faft2 <- (-coef.true - fit.faft2$beta1_hat)^2
-  }
+  se.coef.norm <- (coef.true - coef.est.norm[[1]])^2
+  se.coef.cox <- (coef.true - coef.est.cox[[1]])^2
+  se.coef.faft <- (coef.true - fit.faft$beta1_hat)^2
+  se.coef.faft2 <- (coef.true - fit.faft2$beta1_hat)^2
   
   # calculate CMA CIs
   cma.coef.norm <- get_CMA(fit.norm)
@@ -272,12 +225,9 @@ for(iter in 1:N_iter){
   ## pointwise squared errors for survival function
   ###############################################################
   # set the time grid to evaluate survival function
-  if (family == "cox.ph"){
-    tmax <- 300 # consistent with 'tmax' in simulate_Cox()
-    tgrid <- seq(0, tmax, len = 1000) 
-  } else {
-    tmax <- round(quantile(sim_data$data$t, 0.99))
-    tgrid <- seq(0, tmax, len = 1000)
+  tmax <- 120
+  tgrid <- seq(0, tmax_test, length.out = 1000)
+  if (family %in% c("lognormal", "loglogistic")) {
     lp = sim_data$data$lp
     scale = sim_data$coefficients$b[1]
   }
@@ -294,10 +244,12 @@ for(iter in 1:N_iter){
   # estimated survival function
   S_norm <- cal_stime(fit = fit.norm, data = sim_data$data, tgrid = tgrid, family = 'lognormal')
   S_cox <- cal_stime(fit = fit.cox, data = sim_data$data, tgrid = tgrid, family = 'cox.ph')
+  lp_faft <- as.numeric(fit.faft$lp)
   S_faft <- outer(lp_faft, tgrid, 
                   function(lp_faft_i, tgrid_j) pnorm((log(tgrid_j) - lp_faft_i) / scale_faft, lower.tail = FALSE))
+  lp_faft2 <- as.numeric(fit.faft2$lp)
   S_faft2 <- outer(lp_faft2, tgrid, 
-                   function(lp_faft2_i, tgrid_j) pnorm((log(tgrid_j) - lp_faft2_i) / scale_faft2, lower.tail = FALSE))
+                   function(lp_faft2_i, tgrid_j) 1 - 1 / (1 + (exp(lp_faft2_i) / tgrid_j)^(1 / scale_faft2)))
   
   # calculate pointwise squared error and MISE
   df_surv <- data.frame(time = tgrid,
@@ -326,11 +278,11 @@ for(iter in 1:N_iter){
                         Brier_cox,
                         Brier_faft,
                         Brier_faft2,
-                        time_norm = time.norm,
+                        time_norm,
                         #time_sieve = sieve.results[[3]],
-                        time_cox = time.cox,
-                        time_faft = time_faft,
-                        time_faft2 = time_faft2)
+                        time_cox,
+                        time_faft,
+                        time_faft2)
   
   res <- list(info = df_info, coef = df_coef, surv = df_surv)
 
