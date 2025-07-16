@@ -49,7 +49,7 @@ nS = c(100)
 beta_type = c('simple', 'complex')
 b = c(0.5)
 seed_start = 1000
-N_iter = 500
+N_iter = 50
 
 params = expand.grid(family = family,
                      n = n,
