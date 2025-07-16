@@ -96,6 +96,7 @@ for(iter in 1:N_iter){
     sim_data <- simulate_Cox(n = n, nS = nS, beta_type = beta_type, seed = seed.iter)
   }
 
+  res <- tryCatch({
   ###############################################################
   ## fit functional AFT and Cox model
   ###############################################################
@@ -321,11 +322,29 @@ for(iter in 1:N_iter){
                         time_faft2,
                         time_fttm)
   
-  res <- list(info = df_info, coef = df_coef, surv = df_surv)
-
-  results[[iter]] = res
+  list(
+    info = df_info,
+    coef = df_coef,
+    surv = df_surv
+  )
+  
+  }, error = function(e) {
+    warning(sprintf(
+      "Iteration %d skipped due to error:\n  %s",
+      iter, e$message
+    ))
+    NULL
+  })
+  
+  ## only save non-NULL results
+  if (!is.null(res)) {
+    results[[iter]] <- res
+  }
 
 } # end for loop
+
+# drop NULL entries
+results <- Filter(Negate(is.null), results)
 
 # record date for analysis; create directory for results
 Date = gsub("-", "", Sys.Date())
