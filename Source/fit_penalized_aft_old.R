@@ -4,9 +4,9 @@ optimize_AFT <- function(Y,      # survival time
                          X,      # matrix of functional covariate
                          data,   # name of dataset
                          family, # "lognormal" or "loglogistic"
-                         k = 20, # number of spline basis to construct beta1(s)
+                         k = 30, # number of spline basis to construct beta1(s)
                          lambda,  # smoothing parameter
-                         se = FALSE # confidence intervals for parameters
+                         se = FALSE
                          ) {
   
   # Extract elements
@@ -22,49 +22,71 @@ optimize_AFT <- function(Y,      # survival time
   
   # Initial guesses for beta and b
   init_params <- c(rep(0, k+1), 1)
-  # init_params <- rep(0, k+2)
   
   # Construct the penalty matrix
   Pen <- penalty_matrix(kp = k+1, nS = nS, a = 0.001)
   
   # Optimization
-  fit <- optim(
-    par = init_params,
-    fn = penalized_loglik,
-    gr = penalized_score,
-    method = "BFGS",
-    Y = Y,
-    delta = delta,
-    X = C,
-    family = family,
-    lambda = lambda,
-    Pen = Pen,
-    control = list(maxit = 2000))
+  if (family == "lognormal"){
+    fit <- optim(
+      par = init_params,
+      fn = penalized_loglik,
+      gr = penalized_score,
+      method = "BFGS",
+      Y = Y,
+      delta = delta,
+      X = C,
+      family = family,
+      lambda = lambda,
+      Pen = Pen,
+      control = list(maxit = 2000))
+    } else if (family == "loglogistic"){
+      fit <- optim(
+        par = init_params,
+        fn = penalized_loglik,
+        #gr = penalized_score,
+        method = "Nelder-Mead",
+        Y = Y,
+        delta = delta,
+        X = C,
+        family = family,
+        lambda = lambda,
+        Pen = Pen,
+        control = list(maxit = 2000))
+    }
   
   # Extract estimates
   beta0_hat <- fit$par[1]
   beta1_hat <- as.numeric(fit$par[2:(k+1)] %*% t(B))
   b_hat <- fit$par[k+2]
-  # theta_hat <- fit$par[k+2]
-  # b_hat <- exp(theta_hat)
   mu_hat <- C %*% fit$par[1:(k+1)]
   #RSS <- sum((log(Y) - mu_hat)^2)
   
   # Compute GCV
-  GCV <- compute_gcv(Y, delta, C, mu_hat, b_hat, lambda, Pen, family)
+  beta_hat <- fit$par[1:(k+1)]
+  GCV <- gcv_lognormal(Y, delta, C, beta_hat, b_hat, lambda, Pen)
+  # #S_matrix <- solve(t(C) %*% C + 2 * lambda * Pen) %*% t(C)
+  # S_matrix <- C %*% solve(t(C) %*% C + 2 * lambda * Pen) %*% t(C)
+  # tr_S <- sum(diag(S_matrix))
+  # n <- length(Y)
+  # #GCV <- (RSS/n) / (1 - tr_S/n)^2
+  # GCV <- RSS / (1 - tr_S/n)^2
   
   if (se == TRUE) {
     # Covariance matrix of beta
+    if (family == "lognormal"){
     hessian <- optimHess(fit$par, fn = penalized_loglik, gr = penalized_score,               
                          Y = Y, delta = delta, X = C, family = family, lambda = lambda, Pen = Pen)
+    } else if (family == "loglogistic"){
+      hessian <- optimHess(fit$par, fn = penalized_loglik, gr = NULL, 
+                           Y = Y, delta = delta, X = C, family = family, lambda = lambda, Pen = Pen)
+    }
     cov_beta <- solve(hessian)
     
     # Compute standard error for beta0, beta1, b
     se_beta0 <- sqrt(diag(cov_beta)[1])
     se_beta1 <- sqrt(rowSums((B %*% cov_beta[2:(k+1), 2:(k+1)]) * B))
     se_b <- sqrt(diag(cov_beta)[k+2])
-    # se_theta <- sqrt(diag(cov_beta)[k+2])
-    # se_b <- se_theta * b_hat 
     
     # Confidence intervals
     beta0_ci_lower <- beta0_hat - qnorm(0.975) * se_beta0
@@ -74,12 +96,12 @@ optimize_AFT <- function(Y,      # survival time
     b_ci_lower <- b_hat - qnorm(0.975) * se_b
     b_ci_upper <- b_hat + qnorm(0.975) * se_b
     
-    return(list(beta0_hat = beta0_hat, beta1_hat = beta1_hat, b_hat = b_hat, lp = mu_hat, GCV = GCV,
+    return(list(beta0_hat = beta0_hat, beta1_hat = beta1_hat, b_hat = b_hat, lp = mu_hat, GCV = GCV, 
                 family = family, lambda = lambda, beta0_ci_lower = beta0_ci_lower, beta0_ci_upper = beta0_ci_upper,
                 beta1_ci_lower = beta1_ci_lower, beta1_ci_upper = beta1_ci_upper, b_ci_lower = b_ci_lower, b_ci_upper = b_ci_upper))
   } else {
     
-    return(list(beta0_hat = beta0_hat, beta1_hat = beta1_hat, b_hat = b_hat, lp = mu_hat, GCV = GCV,
+    return(list(beta0_hat = beta0_hat, beta1_hat = beta1_hat, b_hat = b_hat, lp = mu_hat, GCV = GCV, 
                 family = family, lambda = lambda))
   }
 }
@@ -102,8 +124,6 @@ penalized_loglik <- function(params, Y, delta, X, family, lambda, Pen) {
   # Extract parameters
   beta_coef <- params[-length(params)]
   b <- params[length(params)]
-  # theta <- params[length(params)]
-  # b <- exp(theta)
   
   # Ensure b > 0
   if (b <= 0) {
@@ -116,15 +136,10 @@ penalized_loglik <- function(params, Y, delta, X, family, lambda, Pen) {
   
   if (family == "lognormal"){
     log_f <- delta * (-log(Y) - log(b) - 0.5 * z^2 - 0.5 * log(2 * pi))
-    log_S <- (1 - delta) * pnorm(z, lower.tail = FALSE, log.p = TRUE)
-    # log_S <- (1 - delta) * log(1 - pnorm(z))
+    log_S <- (1 - delta) * log(1 - pnorm(z))
   } else if (family == "loglogistic"){
-    p_z <- 1 / (1 + exp(-z)) # logistic cdf
-    log_f <- delta * log((1 / (b * Y)) * p_z * (1 - p_z))
-    log_S <- (1 - delta) * log(1 - p_z)
-    # # guard against zeros in log()
-    # f <- pmax(f, .Machine$double.eps)
-    # S <- pmax(S, .Machine$double.eps)
+    log_f <- delta * (log(dlogis(z)) - log(b))
+    log_S <- (1 - delta) * log(1 - plogis(z))
   }
   
   # Penalized log-likelihood
@@ -145,8 +160,6 @@ penalized_score <- function(params, Y, delta, X, family, lambda, Pen) {
   # Extract parameters
   beta_coef <- params[-length(params)]
   b <- params[length(params)]
-  # theta <- params[length(params)]
-  # b <- exp(theta)
 
   mu <- X %*% beta_coef
   z <- (log(Y) - mu) / b
@@ -161,21 +174,27 @@ penalized_score <- function(params, Y, delta, X, family, lambda, Pen) {
     
     # Score for b
     score_b <- sum(delta * (-1 / b + z^2 / b) + (1 - delta) * f_z * z / (b * S_z))
-    # score_theta <- score_b * b
     
-  } else if (family == "loglogistic"){
-    # Logistic CDF
-    p_z <- 1 / (1 + exp(-z))
-    
-    # Score for beta
-    score_beta <-  crossprod(X, delta * (2 * p_z - 1) + (1 - delta) * p_z) / b - 2 * lambda * Pen %*% beta_coef
-    
-    # Score for b
-    score_b <- sum(- delta + delta * (2*p_z - 1) * z + (1 - delta) * p_z * z) / b
-    # score_theta <- score_b * b
-  }
+  # }
+  # else if (family == "loglogistic"){
+  #   # Log-logistic components
+  #   f_z <- dlogis(z) / b  # PDF of z
+  #   S_z <- plogis(-z)  # survival function of z
+  #   
+  #   # Score for beta
+  #   score_beta <- -(t(X) %*% (delta - (1 - S_z)) / b - 2 * lambda * Pen %*% beta_coef)
+  #   
+  #   # Score for b
+  #   term1 <- -sum(delta / b)
+  #   term2 <- sum(delta * mu / b^2)
+  #   term3 <- -sum((mu + log(Y)) / b^2 * f_z)
+  #   term4 <- -sum((1 - delta) * (mu + log(Y)) / b^2 * (1 - S_z))
+  #   
+  #   score_b <- -(term1 + term2 + term3 + term4)
+  # }
 
   return(-c(score_beta, score_b)) # negative score for minimization
+  }
 }
 
 
@@ -190,101 +209,36 @@ optimize_lambda <- function(Y, delta, X, data, family, lambda_grid) {
   return(optimal_lambda)
 }
 
-##### Function to compute GCV value #####
-compute_gcv <- function(Y, delta, C, mu_hat, b_hat, lambda, Pen, family = c("lognormal", "loglogistic")) {
-  family <- match.arg(family)
-  n <- length(Y)
-  
-  # Log-likelihood
-  loglik <- switch(family,
-                   "lognormal" = {
-                     z <- (log(Y) - mu_hat) / b_hat
-                     #log_f <- -log(Y) - log(b_hat) - 0.5 * z^2 - 0.5 * log(2 * pi)
-                     log_f <- dnorm(z, log = TRUE) - log(Y * b_hat)
-                     log_S <- pnorm(z, lower.tail = FALSE, log.p = TRUE)
-                     sum(delta * log_f + (1 - delta) * log_S)
-                   },
-                   "loglogistic" = {
-                     z <- (log(Y) - mu_hat) / b_hat
-                     log_f <- log(1 / b_hat) - log(Y) - 2 * log(1 + exp(-z))
-                     log_S <- -log(1 + exp(z))
-                     sum(delta * log_f + (1 - delta) * log_S)
-                   }
-  )
-  
-  # Weights for DF calculation (approximate second derivatives)
-  w <- switch(family,
-              "lognormal" = {
-                z <- (log(Y) - mu_hat) / b_hat
-                phi_z <- dnorm(z)
-                S_z <- pnorm(z, lower.tail = FALSE)
-                w <- numeric(n)
-                w[delta == 1] <- 1 / b_hat^2
-                w[delta == 0] <- (phi_z[delta == 0]^2) / (S_z[delta == 0]^2 * b_hat^2)
-                w
-              },
-              "loglogistic" = {
-                z <- (log(Y) - mu_hat) / b_hat
-                # Approximate weight as derivative of log-hazard:
-                p <- exp(z) / (1 + exp(z))  # derivative of log(1 + exp(z)) is logistic
-                w <- numeric(n)
-                w[delta == 1] <- 1 / b_hat^2  # constant approx
-                w[delta == 0] <- (p[delta == 0]^2) / b_hat^2  # rough approx
-                w
-              }
-  )
-  
-  # Clip weights for stability
-  w <- pmin(pmax(w, 1e-6), 1e6)
-  
-  # Degrees of freedom
-  W <- diag(w)
-  XtWX <- t(C) %*% W %*% C
-  df <- tryCatch({
-    H <- solve(XtWX + lambda * Pen, XtWX)
-    sum(diag(H))
-  }, error = function(e) {
-    warning("Matrix inversion failed during GCV calculation.")
-    return(NA)
-  })
-  # Guard against invalid df
-  if (is.na(df) || df <= 0 || df / n > 0.95) {
-    return(Inf)
-  }
-  
-  # GCV
-  gcv <- -loglik / (1 - df / n)^2
-  return(gcv)
+loglik_lognormal <- function(beta, b, Y, delta, mu) {
+  z <- (log(Y) - mu) / b
+  log_f <- dnorm(z, log = TRUE) - log(Y * b)
+  log_S <- pnorm(z, lower.tail = FALSE, log.p = TRUE)
+  sum(delta * log_f + (1 - delta) * log_S)
 }
 
-##### Function to return the linear predictor for new obs #####
-predict_AFT <- function(fit, newdata) {
-  
-  # extract new X
-  X_new <- newdata$X
-  if (is.null(X_new)) stop("`newdata` must have an element named `X`.")
-  if (!is.matrix(X_new)) X_new <- as.matrix(X_new)
-  
-  # extract AFT parameters
-  beta0 <- fit$beta0_hat
-  beta1 <- fit$beta1_hat
-  
-  # check dimensions
-  nS <- ncol(X_new)
-  if (length(beta1) != nS) {
-    warning(sprintf(
-      "Length of beta1_hat (%d) does not match # columns of newdata$X (%d).",
-      length(beta1), nS
-    ))
-  }
-  
-  # compute linear predictor
-  mu_new <- as.vector(beta0 + (X_new %*% beta1) / nS)
-  
-  # preserve row names if present
-  if (!is.null(rownames(X_new))) {
-    names(mu_new) <- rownames(X_new)
-  }
-  
-  return(mu_new)
+compute_weights <- function(Y, delta, mu, b) {
+  z <- (log(Y) - mu) / b
+  phi_z <- dnorm(z)
+  S_z <- pnorm(z, lower.tail = FALSE)
+  w <- numeric(length(Y))
+  w[delta == 1] <- 1 / b^2
+  w[delta == 0] <- (phi_z[delta == 0]^2) / (S_z[delta == 0]^2 * b^2)
+  return(w)
+}
+
+compute_df <- function(C, w, Pen, lambda) {
+  W <- diag(w)
+  XtWX <- t(C) %*% W %*% C
+  H <- solve(XtWX + lambda * Pen, XtWX)
+  sum(diag(H))
+}
+
+gcv_lognormal <- function(Y, delta, C, beta_hat, b_hat, lambda, Pen) {
+  mu_hat <- C %*% beta_hat
+  ll <- loglik_lognormal(beta_hat, b_hat, Y, delta, mu_hat)
+  w <- compute_weights(Y, delta, mu_hat, b_hat)
+  df <- compute_df(C, w, Pen, lambda)
+  n <- length(Y)
+  gcv <- -ll / (1 - df / n)^2
+  return(gcv)
 }

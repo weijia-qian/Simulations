@@ -21,7 +21,7 @@ library(scam)
 library(splines)
 library(tidyverse)
 
-folder_path <- "/Users/weijia/Research/FDA/Simulations/Output/20250703"
+folder_path <- "/Users/weijia/Research/FDA/Simulations/Output/20250709_additive"
 rda_files <- list.files(path = folder_path, pattern = "\\.RDA$", full.names = TRUE)
 all_results <- list()
 for (i in 1:length(rda_files)) {
@@ -30,6 +30,7 @@ for (i in 1:length(rda_files)) {
 ```
 
 ```{r}
+df_coef <- all_results[[3]][[1]]$coef
 df_coef_long <- df_coef %>%
   pivot_longer(
     cols      = c(true_coef, est_coef_aaft, est_coef_afcm),

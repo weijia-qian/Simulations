@@ -27,9 +27,6 @@ all_results <- list()
 for (i in 1:length(rda_files)) {
   all_results[[i]] <- loadRDa(rda_files[[i]])
 }
-
-# remove empty lists
-all_results[[6]] <- Filter(Negate(is.null), all_results[[6]])
 ```
 
 ### Function to Create Summary Table
@@ -41,8 +38,9 @@ create_table <- function(data, var, beta_type, title, subtitle){
                names_to = "type",
                values_to = "value") %>%
   mutate(est_model = case_when(str_detect(type, "cox") ~ "LFCM",
-                               str_detect(type, "norm") ~ "AFT",
-                               str_detect(type, "sieve") ~ "Sieve"))
+                               str_detect(type, "norm") ~ "mgcv lfAFT",
+                               str_detect(type, "faft2") ~ "loglogistic lfAFT",
+                               .default = "lognormal lfAFT"))
 
   # Combine 'n' and 'nS' into wider columns
   data2 <- data1 %>%
@@ -75,6 +73,7 @@ create_table <- function(data, var, beta_type, title, subtitle){
 all_info <- data.frame()
 # Loop through all scenarios and iterations to extract 'info'
 for (scenario in all_results) {
+  print(scenario[[1]]$info$scenario)
   for (iteration in scenario) {
     all_info <- rbind(all_info, iteration$info)
   }
@@ -87,11 +86,12 @@ table_cindex <- all_info %>%
     AUC_norm = round(mean(AUC_norm, na.rm = TRUE), 3),
     AUC_cox = round(mean(AUC_cox, na.rm = TRUE), 3),
     AUC_faft = round(mean(AUC_faft, na.rm = TRUE), 3),
+    AUC_faft2 = round(mean(AUC_faft2, na.rm = TRUE), 3),
     .groups = "drop"
   )
 
 # Create summary table
-table_cindex_1 <- create_table(table_cindex, var = c("AUC_norm", "AUC_cox"), beta_type = "simple",
+table_cindex_1 <- create_table(table_cindex, var = c("AUC_norm", "AUC_cox", "AUC_faft", "AUC_faft2"), beta_type = "simple",
                                title = "Average Out-of-Sample C-Index Across 500 Simulations",
                                subtitle = "Beta type: simple")
 table_cindex_1
@@ -113,6 +113,7 @@ table_Brier <- all_info %>%
     Brier_norm = round(mean(Brier_norm, na.rm = TRUE), 3),
     Brier_cox = round(mean(Brier_cox, na.rm = TRUE), 3),
     Brier_faft = round(mean(Brier_faft, na.rm = TRUE), 3),
+    Brier_faft2 = round(mean(Brier_faft, na.rm = TRUE), 3),
     .groups = "drop"
   )
 
@@ -128,18 +129,21 @@ table_Brier_2
 
 # boxplot
 plot_Brier <- table_Brier %>%
-  pivot_longer(cols = c("Brier_norm", "Brier_cox", "Brier_faft"),
+  pivot_longer(cols = c("Brier_norm", "Brier_cox", "Brier_faft", "Brier_faft2"),
                names_to = "type",
                values_to = "value") %>%
   mutate(est_model = case_when(str_detect(type, "cox") ~ "LFCM",
-                               str_detect(type, "norm") ~ "mgcv AFT",
-                               str_detect(type, "aft") ~ "my AFT"))
+                               str_detect(type, "norm") ~ "mgcv lfAFT",
+                               str_detect(type, "faft2") ~ "loglogistic lfAFT",
+                               .default = "lognormal lfAFT"))
+
 plot_Brier %>%
   filter(beta_type == "simple") %>%
   ggplot(aes(factor(nS), value, fill = est_model)) + 
   geom_bar(stat = "identity", position = position_dodge()) +
   facet_grid(family~n, labeller = label_both) +
-  labs(x = "nS", y = "Brier Score", title = "Average Brier Score Across 500 Simulations")
+  labs(x = "nS", y = "Brier Score", title = "Average Brier Score Across 500 Simulations",
+       subtitle = "beta type: simple")
 
 plot_Brier %>%
   filter(beta_type == "simple" & nS == 100) %>%
@@ -362,6 +366,7 @@ for (scenario in all_results) {
                            mise_coef_norm = mean(iteration$coef$se_coef_norm),
                            mise_coef_cox = mean(iteration$coef$se_coef_cox),
                            mise_coef_faft = mean(iteration$coef$se_coef_faft),
+                           mise_coef_faft2 = mean(iteration$coef$se_coef_faft2),
                            #mise_coef_sieve = mean(iteration$coef$se_coef_sieve),
                            cp_coef_norm = mean(iteration$coef$cover_coef_norm),
                            cp_coef_cox = mean(iteration$coef$cover_coef_cox),
@@ -381,6 +386,7 @@ table_mise_coef <- all_coef %>%
     mise_coef_norm = round(mean(mise_coef_norm, na.rm = TRUE), 3),
     mise_coef_cox = round(mean(mise_coef_cox, na.rm = TRUE), 3),
     mise_coef_faft = round(mean(mise_coef_faft, na.rm = TRUE), 3),
+    mise_coef_faft2 = round(mean(mise_coef_faft, na.rm = TRUE), 3),
     #mise_coef_sieve = round(mean(mise_coef_sieve, na.rm = TRUE), 3),
     .groups = "drop"
   ) 
@@ -399,14 +405,15 @@ table_mise_coef_2
 
 # plot
 plot_mise_coef <- table_mise_coef %>%
-  pivot_longer(cols = c("mise_coef_norm", "mise_coef_faft"),
+  pivot_longer(cols = c("mise_coef_norm", "mise_coef_faft", "mise_coef_faft2"),
                names_to = "type",
                values_to = "value") %>%
   mutate(est_model = case_when(str_detect(type, "cox") ~ "LFCM",
-                               str_detect(type, "norm") ~ "mgcv AFT",
-                               str_detect(type, "faft") ~ "my AFT"))
+                               str_detect(type, "norm") ~ "mgcv lfAFT",
+                               str_detect(type, "faft2") ~ "loglogistic lfAFT",
+                               .default = "lognormal lfAFT"))
 plot_mise_coef %>%
-  filter(beta_type == "simple") %>%
+  filter(beta_type == "complex") %>%
   ggplot(aes(factor(nS), value, fill = est_model)) + 
   geom_bar(stat = "identity", position = position_dodge()) +
   facet_grid(family~n, labeller = label_both) +
@@ -486,7 +493,8 @@ for (scenario in all_results) {
                            b = iteration$info$b,
                            mise_surv_norm = mean(iteration$surv$se_surv_norm),
                            mise_surv_cox = mean(iteration$surv$se_surv_cox),
-                           mise_surv_faft = mean(iteration$surv$se_surv_faft))
+                           mise_surv_faft = mean(iteration$surv$se_surv_faft),
+                           mise_surv_faft2 = mean(iteration$surv$se_surv_faft2))
 
     # Append to all_coef
     all_surv <- rbind(all_surv, tmp_data)
@@ -499,6 +507,7 @@ table_mise_surv <- all_surv %>%
     mise_surv_norm = round(mean(mise_surv_norm, na.rm = TRUE), 3),
     mise_surv_cox = round(mean(mise_surv_cox, na.rm = TRUE), 3),
     mise_surv_faft = round(mean(mise_surv_faft, na.rm = TRUE), 3),
+    mise_surv_faft2 = round(mean(mise_surv_faft2, na.rm = TRUE), 3),
     .groups = "drop"
   )
 
@@ -516,12 +525,13 @@ table_mise_surv_2
 
 # boxplot
 plot_surv <- table_mise_surv %>%
-  pivot_longer(cols = c("mise_surv_norm", "mise_surv_cox", "mise_surv_faft"),
+  pivot_longer(cols = c("mise_surv_norm", "mise_surv_cox", "mise_surv_faft", "mise_surv_faft2"),
                names_to = "type",
                values_to = "value") %>%
   mutate(est_model = case_when(str_detect(type, "cox") ~ "LFCM",
-                               str_detect(type, "aft") ~ "my AFT",
-                               str_detect(type, "norm") ~ "mgcv AFT"))
+                               str_detect(type, "norm") ~ "mgcv lfAFT",
+                               str_detect(type, "faft2") ~ "loglogistic lfAFT",
+                               .default = "lognormal lfAFT"))
 plot_surv %>%
   filter(beta_type == "simple") %>%
   ggplot(aes(factor(nS), value, fill = est_model)) + 

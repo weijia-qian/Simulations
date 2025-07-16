@@ -19,6 +19,7 @@ library(survival)
 library(tidyverse)
 source(here("Source", "simulate_AFT.R"))
 source(here("Source", "fit_penalized_aft.R"))
+source(here("Source", "fit_penalized_aft_old.R"))
 load(here("Source", "dat_func.Rdata"))
 ```
 
@@ -30,34 +31,34 @@ n <- 100   # number of subjects
 nS <- 100   # number of observations
 beta_type <- "simple"
 beta0_true <- 0.5
-b_true <- 0.1
+b_true <- 0.5
 
-simdata <- simulate_AFT(family = family, n = n, nS =nS, beta_type = beta_type, beta_0 = beta0_true,
+sim_data <- simulate_AFT(family = family, n = n, nS =nS, beta_type = beta_type, beta_0 = beta0_true,
                         b = b_true)
-#simdata <- simulate_Cox(n = n, nS = nS, beta_type = beta_type)
-#saveRDS(simdata, file = "simdata.rds")
+#sim_data <- simulate_Cox(n = n, nS = nS, beta_type = beta_type)
+#saveRDS(sim_data, file = "sim_data.rds")
 
 # Optimize lambda using GCV
 model <- "loglogistic"
 lambda_grid <- exp(seq(log(1000), log(10000), length.out = 500))
-best_lambda <- optimize_lambda(Y, delta, X, data = simdata$data, family = model, lambda_grid)
+best_lambda <- optimize_lambda(Y, delta, X, data = sim_data$data, family = model, lambda_grid)
 print(paste("Optimal lambda:", best_lambda))
 
-lambda_list <- c(best_lambda - 5, best_lambda, best_lambda + 5)
-#lambda_list <- c(best_lambda)
+lambda_list <- c(best_lambda - 10, best_lambda, best_lambda + 10)
+lambda_list <- c(1000, 1100, 1200, 1300, 1400, 1500)
 for (lambda in lambda_list) {
   # Fit the model
-  fit <- optimize_AFT(Y, delta, X, data = simdata$data, family = model, lambda = lambda, se = TRUE)
+  fit <- optimize_AFT(Y, delta, X, data = sim_data$data, family = model, lambda = lambda, se = TRUE)
 
   # Extract results
   cat("True beta0 =", beta0_true, "Estimated beta0 =", round(fit$beta0_hat, 3), "\n")
   cat("True b =", b_true, "Estimated b =", round(fit$b_hat, 3), "\n")
-  mise_beta1 <- mean((simdata$coefficients$beta1 - fit$beta1_hat)^2)
+  mise_beta1 <- mean((sim_data$coefficients$beta1 - fit$beta1_hat)^2)
   cat("MISE of beta1 =", round(mise_beta1, 5), "\n")
 
   # Summary of coefficient function
-  df_coef <- data.frame(time = simdata$coefficients$time,             
-                        true_coef = simdata$coefficients$beta1,                      
+  df_coef <- data.frame(time = sim_data$coefficients$time,             
+                        true_coef = sim_data$coefficients$beta1,                      
                         est_coef = fit$beta1_hat,
                         lb_coef = fit$beta1_ci_lower,
                         ub_coef = fit$beta1_ci_upper)
