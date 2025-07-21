@@ -1,0 +1,389 @@
+---
+title: "Simulation Results"
+author: "Weijia Qian"
+date: '`r format(Sys.time(), "%Y-%m-%d")`'
+output:
+  html_document: 
+    code_folding: hide
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, repr.plot.width = 12, repr.plot.height = 8)
+library(CCMHr)
+library(gt)
+library(kableExtra)
+library(MASS)
+library(mgcv)
+library(refund)
+library(scam)
+library(splines)
+library(tidyverse)
+
+folder_path <- "/Users/weijia/Research/FDA/Simulations/Output/20250716_fttm"
+rda_files <- list.files(path = folder_path, pattern = "\\.RDA$", full.names = TRUE)
+all_results <- list()
+for (i in 1:length(rda_files)) {
+  all_results[[i]] <- loadRDa(rda_files[[i]])
+}
+```
+
+### Function to Create Summary Table
+```{r, include=FALSE}
+# Transpose dataset from wide to long
+create_table <- function(data, var, beta_type, title){
+  data1 <- data %>%
+  pivot_longer(cols = var,
+               names_to = "type",
+               values_to = "value") %>%
+  mutate(est_model = case_when(str_detect(type, "cox") ~ "mgcv LFCM",
+                               str_detect(type, "fttm") ~ "FTTM",
+                               str_detect(type, "norm") ~ "mgcv lfAFT",
+                               str_detect(type, "faft2") ~ "loglogistic lfAFT",
+                               .default = "lognormal lfAFT"))
+
+  # Combine 'n' and 'nS' into wider columns
+  data2 <- data1 %>%
+    #filter(beta_type == !!beta_type) %>%
+    pivot_wider(names_from = c(n, nS, beta_type), values_from = value, names_sep = "_nS_")
+
+  gt_table <- data2 %>%
+    dplyr::select(-c(type)) %>%
+    gt(groupname_col = "family") %>%
+    tab_spanner(label = "N = 100", columns = starts_with("100_")) %>%
+    tab_spanner(label = "N = 200", columns = starts_with("200_")) %>%
+    tab_spanner(label = "N = 500", columns = starts_with("500_")) %>%
+    cols_label(ends_with("nS_50") ~ "nS = 50",
+               ends_with("nS_100") ~ "nS = 100",
+               ends_with("nS_500") ~ "nS = 500") %>%
+   tab_header(title = title) %>%
+   cols_align(align = "center", columns = everything()) %>%
+   fmt_number(columns = where(is.numeric), decimals = 3) %>%
+   opt_table_outline() %>%
+   opt_row_striping()
+
+  return(gt_table)
+}
+```
+
+
+### Average Out-of-Sample Brier Score Across Iterations
+
+```{r}
+all_info <- data.frame()
+# Loop through all scenarios and iterations to extract 'info'
+for (scenario in all_results) {
+  print(scenario[[1]]$info$scenario)
+  for (iteration in scenario) {
+    all_info <- rbind(all_info, iteration$info)
+  }
+}
+
+# Calculate the average Brier Score Across iterations
+table_Brier <- all_info %>%
+  filter(if_all(where(is.numeric), ~ !is.infinite(.))) %>%
+  group_by(beta_type, family, n, nS) %>%
+  summarise(
+    Brier_norm = round(mean(Brier_norm, na.rm = TRUE), 3),
+    Brier_cox = round(mean(Brier_cox, na.rm = TRUE), 3),
+    Brier_faft = round(mean(Brier_faft, na.rm = TRUE), 3),
+    Brier_faft2 = round(mean(Brier_faft2, na.rm = TRUE), 3),
+    Brier_fttm = round(mean(Brier_fttm, na.rm = TRUE), 3),
+    .groups = "drop"
+  )
+
+# Create summary table
+# print(table_Brier)
+
+# plot
+plot_Brier <- table_Brier %>%
+  pivot_longer(cols = c("Brier_norm", "Brier_cox", "Brier_faft", "Brier_faft2", "Brier_fttm"),
+               names_to = "type",
+               values_to = "value") %>%
+  mutate(est_model = case_when(str_detect(type, "cox") ~ "mgcv LFCM",
+                               str_detect(type, "fttm") ~ "FTTM",
+                               str_detect(type, "norm") ~ "mgcv lfAFT",
+                               str_detect(type, "faft2") ~ "loglogistic lfAFT",
+                               .default = "lognormal lfAFT"))
+
+plot_Brier %>%
+  ggplot(aes(factor(n), value, fill = est_model)) + 
+  geom_bar(stat = "identity", position = position_dodge()) +
+  facet_grid(family~beta_type, labeller = label_both) +
+  labs(x = "n", y = "Brier Score", title = "Average Brier Score Across 100 Simulations", fill = "Model")
+
+```
+
+### Plot Estimated Coefficient + CI + True Coefficient
+Fitted using the log-normal functional AFT model.
+
+```{r}
+sub_coef <- data.frame()
+
+# Loop through all scenarios and iterations to extract 'coef'
+for (scenario in all_results) {
+  counter <- 0  # Initialize a counter
+
+  for (iteration in scenario) {
+    # Break the inner loop if 50 iterations for the current scenario are stored
+    if (counter >= 1) {
+      break
+    }
+
+    # Extract data for the current iteration
+    time <- seq(0, 1, length.out = iteration$info$nS)
+    tmp_data <- data.frame(scenario = iteration$info$scenario,
+                           iter = iteration$info$iter,
+                           family = iteration$info$family,
+                           beta_type = iteration$info$beta_type,
+                           n = iteration$info$n,
+                           nS = iteration$info$nS,
+                           b = iteration$info$b,
+                           time = time,
+                           censor_rate = iteration$info$censor_rate,
+                           true_coef = iteration$coef$true_coef,
+                           est_coef_norm = iteration$coef$est_coef_norm,
+                           lb_coef_norm = iteration$coef$lb_coef_norm,
+                           ub_coef_norm = iteration$coef$ub_coef_norm,
+                           est_coef_faft = iteration$coef$est_coef_faft,
+                           lb_coef_faft = iteration$coef$lb_coef_faft,
+                           ub_coef_faft = iteration$coef$ub_coef_faft,
+                           est_coef_faft2 = iteration$coef$est_coef_faft2,
+                           lb_coef_faft2 = iteration$coef$lb_coef_faft2,
+                           ub_coef_faft2 = iteration$coef$ub_coef_faft2,
+                           est_coef_fttm = iteration$coef$est_coef_fttm,
+                           lb_coef_fttm = iteration$coef$lb_coef_fttm,
+                           ub_coef_fttm = iteration$coef$ub_coef_fttm,
+                           cma_lb_coef_norm = iteration$coef$cma_lb_coef_norm,
+                           cma_ub_coef_norm = iteration$coef$cma_ub_coef_norm,
+                           est_coef_cox = iteration$coef$est_coef_cox,
+                           lb_coef_cox = iteration$coef$lb_coef_cox,
+                           ub_coef_cox = iteration$coef$ub_coef_cox,
+                           cma_lb_coef_cox = iteration$coef$cma_lb_coef_cox,
+                           cma_ub_coef_cox = iteration$coef$cma_ub_coef_cox)
+
+    # Append to all_coef
+    sub_coef <- rbind(sub_coef, tmp_data)
+
+    # Increment the counter
+    counter <- counter + 1
+  }
+}
+
+# Ensure the required directory for saving plots exists
+# output_dir <- "../Figures"
+# if (!dir.exists(output_dir)) {
+#   dir.create(output_dir)
+# }
+
+# select a subset of scenarios
+# sub_coef_2 <- sub_coef %>%
+#   filter(family != "cox.ph")
+
+# Loop through each unique scenario
+scenarios <- unique(sub_coef[, c("family", "n", "nS", "beta_type", "b", "censor_rate")])
+library(scales)
+for (i in 1:nrow(scenarios)) {
+  # Extract the scenario information
+  scenario <- scenarios[i, ]
+  family <- scenario$family
+  n <- scenario$n
+  nS <- scenario$nS
+  beta_type <- scenario$beta_type
+  b <- scenario$b
+  censor_rate <- scenario$censor_rate
+
+# Filter data for the current scenario
+  scenario_data <- sub_coef %>%
+    filter(family == !!family, n == !!n, nS == !!nS, beta_type == !!beta_type, b == !!b)
+
+# Create the plot
+p <- ggplot(data = scenario_data, aes(x = time)) +
+  #geom_ribbon(aes(ymin = lb_coef_faft, ymax = ub_coef_faft, fill = "Pointwise CI"), alpha = 0.5) +
+  #geom_ribbon(aes(ymin = cma_lb_coef_norm, ymax = cma_ub_coef_norm, fill = "CMA CI"), alpha = 0.3) +
+  geom_line(aes(y = true_coef), color = "red", linetype = "dashed", size = 1) +
+  geom_line(aes(y = est_coef_norm, color = "mgcv lfAFT"), size = 0.7) +
+  geom_line(aes(y = est_coef_cox, color = "mgcv LFCM"), size = 0.7) +
+  geom_line(aes(y = est_coef_faft, color = "lognormal lfAFT"), size = 0.7) +
+  geom_line(aes(y = est_coef_faft2, color = "loglogistic lfAFT"), size = 0.7) +
+  geom_line(aes(y = est_coef_fttm, color = "FTTM"), size = 0.7) +
+  scale_color_manual(values = hue_pal()(6)[-1]) +
+  # scale_fill_manual(values = c(
+  #   "Pointwise CI" = "lightblue"
+  #   #"CMA CI" = "lightgreen"
+  # )) +
+  labs(
+    x = "Time",
+    y = "Coefficient",
+    title = paste("family =",family, "n =", n, "nS =", nS, "beta_type =", beta_type),
+    subtitle = paste("b=", b, "censor rate =", censor_rate),
+    color = NULL,
+    fill = NULL
+  ) +
+  theme_minimal()
+print(p)
+}
+
+# Save the plot
+# file_name <- paste0(output_dir, "/", family, "_", n, "_", nS, "_", beta_type, ".png")
+# ggsave(file_name, plot = p, width = 8, height = 6)
+```
+
+
+
+### MISE for Estimated Coefficient Functions Across Iterations
+```{r}
+all_coef <- data.frame() 
+
+# Loop through all scenarios and iterations to extract 'coef'
+for (scenario in all_results) {
+  for (iteration in scenario) {
+    
+    # Extract data for the current iteration
+    tmp_data <- data.frame(scenario = iteration$info$scenario,
+                           iter = iteration$info$iter,
+                           family = iteration$info$family,
+                           n = iteration$info$n,
+                           nS = iteration$info$nS,
+                           b = iteration$info$b,
+                           #time = time,
+                           beta_type = iteration$info$beta_type,
+                           mise_coef_norm = mean(iteration$coef$se_coef_norm),
+                           mise_coef_cox = mean(iteration$coef$se_coef_cox),
+                           mise_coef_faft = mean(iteration$coef$se_coef_faft),
+                           mise_coef_faft2 = mean(iteration$coef$se_coef_faft2),
+                           mise_coef_fttm = mean(iteration$coef$se_coef_fttm),
+                           cp_coef_norm = mean(iteration$coef$cover_coef_norm),
+                           cp_coef_cox = mean(iteration$coef$cover_coef_cox),
+                           cp_coef_faft = mean(iteration$coef$cover_coef_faft),
+                           cp_coef_faft2 = mean(iteration$coef$cover_coef_faft2),
+                           cp_coef_fttm = mean(iteration$coef$cover_coef_fttm),
+                           cp_cma_coef_norm = all(iteration$coef$cover_cma_coef_norm),
+                           cp_cma_coef_cox = all(iteration$coef$cover_cma_coef_cox))
+
+    # Append to all_coef
+    all_coef <- rbind(all_coef, tmp_data)
+  }
+}
+
+# Calculate the average MISE of coefficient function Across iterations
+table_mise_coef <- all_coef %>%
+  group_by(b, beta_type, family, n, nS) %>%
+  summarise(
+    mise_coef_norm = round(mean(mise_coef_norm, na.rm = TRUE), 3),
+    mise_coef_cox = round(mean(mise_coef_cox, na.rm = TRUE), 3),
+    mise_coef_faft = round(mean(mise_coef_faft, na.rm = TRUE), 3),
+    mise_coef_faft2 = round(mean(mise_coef_faft2, na.rm = TRUE), 3),
+    mise_coef_fttm = round(mean(mise_coef_fttm, na.rm = TRUE), 3),
+    .groups = "drop"
+  ) 
+
+# plot
+plot_mise_coef <- table_mise_coef %>%
+  pivot_longer(cols = c("mise_coef_norm", "mise_coef_cox", "mise_coef_faft", "mise_coef_faft2", "mise_coef_fttm"),
+               names_to = "type",
+               values_to = "value") %>%
+  mutate(est_model = case_when(str_detect(type, "cox") ~ "mgcv LFCM",
+                               str_detect(type, "fttm") ~ "FTTM",
+                               str_detect(type, "norm") ~ "mgcv lfAFT",
+                               str_detect(type, "faft2") ~ "loglogistic lfAFT",
+                               .default = "lognormal lfAFT"))
+
+plot_mise_coef %>%
+  ggplot(aes(factor(n), value, fill = est_model)) + 
+  geom_bar(stat = "identity", position = position_dodge()) +
+  facet_grid(family~beta_type, labeller = label_both) +
+  labs(x = "n", y = "MISE", title = "Average MISE of Coefficient Function Across 100 Simulations", fill = "Model")
+```
+
+### Average Coverage Probability of Pointwise CIs for Coefficient Function
+```{r}
+# Calculate the average CP of Pointwise CIs for Coefficient Function
+table_cp_coef <- all_coef %>%
+  group_by(b, beta_type, family, n, nS) %>%
+  summarise(
+    cp_coef_norm = round(mean(cp_coef_norm, na.rm = TRUE), 3),
+    cp_coef_cox = round(mean(cp_coef_cox, na.rm = TRUE), 3),
+    cp_coef_faft = round(mean(cp_coef_faft, na.rm = TRUE), 3),
+    cp_coef_faft2 = round(mean(cp_coef_faft2, na.rm = TRUE), 3),
+    cp_coef_fttm = round(mean(cp_coef_fttm, na.rm = TRUE), 3),
+    .groups = "drop"
+  ) 
+
+# plot
+plot_cp_coef <- table_cp_coef %>%
+  pivot_longer(cols = c("cp_coef_norm", "cp_coef_cox", "cp_coef_faft", "cp_coef_faft2", "cp_coef_fttm"),
+               names_to = "type",
+               values_to = "value") %>%
+  mutate(est_model = case_when(str_detect(type, "cox") ~ "mgcv LFCM",
+                               str_detect(type, "fttm") ~ "FTTM",
+                               str_detect(type, "norm") ~ "mgcv lfAFT",
+                               str_detect(type, "faft2") ~ "loglogistic lfAFT",
+                               .default = "lognormal lfAFT"))
+
+plot_cp_coef %>%
+  ggplot(aes(factor(n), value, fill = est_model)) + 
+  geom_bar(stat = "identity", position = position_dodge()) +
+  geom_hline(yintercept=0.95, linetype="dashed", color = "red") +
+  facet_grid(family~beta_type, labeller = label_both) +
+  labs(x = "n", y = "Coverage Probability", title = "Average Pointwise Coverage Probability of Coefficient Function Across 100 Simulations", fill = "Model")
+```
+
+### MISE for Estimated Survival Functions
+```{r}
+all_surv <- data.frame() 
+
+# Loop through all scenarios and iterations to extract 'coef'
+for (scenario in all_results) {
+  for (iteration in scenario) {
+    # Extract data for the current iteration
+    tmp_data <- data.frame(scenario = iteration$info$scenario,
+                           iter = iteration$info$iter,
+                           family = iteration$info$family,
+                           n = iteration$info$n,
+                           nS = iteration$info$nS,
+                           beta_type = iteration$info$beta_type,
+                           b = iteration$info$b,
+                           mise_surv_norm = mean(iteration$surv$se_surv_norm),
+                           mise_surv_cox = mean(iteration$surv$se_surv_cox),
+                           mise_surv_faft = mean(iteration$surv$se_surv_faft),
+                           mise_surv_faft2 = mean(iteration$surv$se_surv_faft2),
+                           mise_surv_fttm = mean(iteration$surv$se_surv_fttm))
+
+    # Append to all_coef
+    all_surv <- rbind(all_surv, tmp_data)
+  }
+}
+
+table_mise_surv <- all_surv %>%
+  group_by(b, beta_type, family, n, nS) %>%
+  summarise(
+    mise_surv_norm = round(mean(mise_surv_norm, na.rm = TRUE), 3),
+    mise_surv_cox = round(mean(mise_surv_cox, na.rm = TRUE), 3),
+    mise_surv_faft = round(mean(mise_surv_faft, na.rm = TRUE), 3),
+    mise_surv_faft2 = round(mean(mise_surv_faft2, na.rm = TRUE), 3),
+    mise_surv_fttm = round(mean(mise_surv_fttm, na.rm = TRUE), 3),
+    .groups = "drop"
+  )
+
+# plot
+plot_mise_surv <- table_mise_surv %>%
+  pivot_longer(cols = c("mise_surv_norm", "mise_surv_cox", "mise_surv_faft", "mise_surv_faft2", "mise_surv_fttm"),
+               names_to = "type",
+               values_to = "value") %>%
+  mutate(est_model = case_when(str_detect(type, "cox") ~ "mgcv LFCM",
+                               str_detect(type, "fttm") ~ "FTTM",
+                               str_detect(type, "norm") ~ "mgcv lfAFT",
+                               str_detect(type, "faft2") ~ "loglogistic lfAFT",
+                               .default = "lognormal lfAFT"))
+
+plot_mise_surv %>%
+  ggplot(aes(factor(n), value, fill = est_model)) + 
+  geom_bar(stat = "identity", position = position_dodge()) +
+  facet_grid(family~beta_type, labeller = label_both) +
+  labs(x = "n", y = "MISE", title = "Average MISE of Survival Function Across 100 Simulations", fill = "Model")
+```
+
+
+

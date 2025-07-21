@@ -29,7 +29,7 @@ load(here("Source", "dat_func.Rdata"))
 family <- "lognormal"
 n <- 100   # number of subjects
 nS <- 100   # number of observations
-beta_type <- "simple"
+beta_type <- "complex"
 beta0_true <- 0.5
 b_true <- 0.5
 

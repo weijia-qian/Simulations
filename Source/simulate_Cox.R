@@ -7,7 +7,7 @@ simulate_Cox = function(data = dat_func,
                         tmax = 120,
                         range_s = 1,
                         nS = 401,
-                        u = 120,
+                        u = 200,
                         seed = 916){
   
   set.seed(seed)
@@ -75,7 +75,7 @@ simulate_Cox = function(data = dat_func,
                        S = I(matrix(sgrid, ncol = nS, nrow = n, byrow = TRUE)))
   df_sim$X_L = I(df_sim$X * df_sim$L)
   if (beta_type == "simple"){
-    beta <- function(s) 0.3 - (s - 0.2)^2
+    beta <- function(s) 0.1 - (s - 0.2)^2
     eta_i <- sim_curves %*% beta(sgrid) * (range_s / nS)
   } else {
     #beta <- function(s) -0.3 + cos(10 * s)
