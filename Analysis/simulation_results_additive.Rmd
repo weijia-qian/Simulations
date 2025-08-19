@@ -16,10 +16,32 @@ library(gt)
 library(kableExtra)
 library(MASS)
 library(mgcv)
+library(patchwork)
 library(refund)
 library(scam)
 library(splines)
 library(tidyverse)
+
+theme_set(theme_minimal() + theme(legend.position = "bottom"))
+# theme(axis.text = element_text(size = 15),
+#         axis.title = element_text(size = 15),
+#         axis.text.x = element_blank(),
+#         axis.ticks.x = element_blank(),
+#         legend.position = "bottom",
+#         legend.box.margin = margin(t = -20, b = 0),
+#         legend.title = element_text(size = 15),
+#         legend.text = element_text(size = 15))
+
+# Define a custom color palette for the methods
+my_colors <- c(
+  "FTTM" = "#440154",
+  # "mgcv LFCM" = "#414487",
+  "LFCM" = "#2A788E",
+  "loglogistic lfAFT" = "#7AD151",
+  "lfAFT" = "#FDE725",
+  "AFCM" = "#E03C8A",
+  "afAFT" = "#B481BB"
+)
 
 folder_path <- "/Users/weijia/Research/FDA/Simulations/Output/20250709_additive"
 rda_files <- list.files(path = folder_path, pattern = "\\.RDA$", full.names = TRUE)
@@ -30,7 +52,7 @@ for (i in 1:length(rda_files)) {
 ```
 
 ```{r}
-df_coef <- all_results[[3]][[1]]$coef
+df_coef <- all_results[[2]][[1]]$coef
 df_coef_long <- df_coef %>%
   pivot_longer(
     cols      = c(true_coef, est_coef_aaft, est_coef_afcm),
@@ -45,7 +67,7 @@ ggplot(df_coef_long, aes(x = S, y = X, z = coef)) +
   labs(
     x     = "S",
     y     = "X",
-    title = "True vs. Estimated F(x,s)"
+    #title = "True vs. Estimated F(x,s)"
   ) +
   theme_minimal()
 ```
@@ -58,9 +80,9 @@ create_table <- function(data, var, beta_type, title, subtitle){
   pivot_longer(cols = var,
                names_to = "type",
                values_to = "value") %>%
-  mutate(est_model = case_when(str_detect(type, "aaft") ~ "aAFT",
+  mutate(est_model = case_when(str_detect(type, "aaft") ~ "afAFT",
                                str_detect(type, "afcm") ~ "AFCM",
-                               str_detect(type, "laft") ~ "lAFT",
+                               str_detect(type, "laft") ~ "lfAFT",
                                str_detect(type, "lfcm") ~ "LFCM"))
 
   # Combine 'n' and 'nS' into wider columns
@@ -89,7 +111,6 @@ create_table <- function(data, var, beta_type, title, subtitle){
 
 
 ### Average Out-of-Sample C-index Across Iterations
-
 ```{r}
 all_info <- data.frame()
 # Loop through all scenarios and iterations to extract 'info'
@@ -121,9 +142,9 @@ plot_cindex <- table_cindex %>%
   pivot_longer(cols = c("AUC_aaft", "AUC_afcm", "AUC_laft", "AUC_lfcm"),
                names_to = "type",
                values_to = "value") %>%
-  mutate(est_model = case_when(str_detect(type, "aaft") ~ "aAFT",
+  mutate(est_model = case_when(str_detect(type, "aaft") ~ "afAFT",
                                str_detect(type, "afcm") ~ "AFCM",
-                               str_detect(type, "laft") ~ "lAFT",
+                               str_detect(type, "laft") ~ "lfAFT",
                                str_detect(type, "lfcm") ~ "LFCM"))
 plot_cindex %>%
   ggplot(aes(factor(nS), value, fill = est_model)) + 
@@ -135,47 +156,27 @@ plot_cindex %>%
 ### Average Out-of-Sample Brier Score Across Iterations
 
 ```{r}
-# Calculate the average Brier Score Across iterations
-table_Brier <- all_info %>%
-  group_by(beta_type, family, n, nS) %>%
-  filter(is.finite(Brier_aaft) & is.finite(Brier_afcm) & is.finite(Brier_laft) & is.finite(Brier_lfcm)) %>%
-  summarise(
-    Brier_aaft = round(mean(Brier_aaft, na.rm = TRUE), 3),
-    Brier_afcm = round(mean(Brier_afcm, na.rm = TRUE), 3),
-    Brier_laft = round(mean(Brier_laft, na.rm = TRUE), 3),
-    Brier_lfcm = round(mean(Brier_laft, na.rm = TRUE), 3)
-  )
-
-# Create summary table
-table_Brier_1 <- create_table(table_Brier, var = c("Brier_aaft", "Brier_afcm", "Brier_laft", "Brier_lfcm"),
-                               title = "Average Out-of-Sample Brier Score Across 100 Simulations",
-                               subtitle = "Beta type: linear")
-table_Brier_1
-
-
 # boxplot
-plot_Brier <- table_Brier %>%
+table_Brier <- all_info %>%
+  filter(family != "loglogistic") %>%
   pivot_longer(cols = c("Brier_aaft", "Brier_afcm", "Brier_laft", "Brier_lfcm"),
                names_to = "type",
                values_to = "value") %>%
-  mutate(est_model = case_when(str_detect(type, "aaft") ~ "aAFT",
+  mutate(est_model = case_when(str_detect(type, "aaft") ~ "afAFT",
                                str_detect(type, "afcm") ~ "AFCM",
-                               str_detect(type, "laft") ~ "lAFT",
-                               str_detect(type, "lfcm") ~ "LFCM"))
-plot_Brier %>%
-  ggplot(aes(factor(nS), value, fill = est_model)) + 
-  geom_bar(stat = "identity", position = position_dodge()) +
-  facet_grid(family~n, labeller = label_both) +
-  labs(x = "nS", y = "Brier Score", title = "Average Brier Score Across 100 Simulations")
+                               str_detect(type, "laft") ~ "lfAFT",
+                               str_detect(type, "lfcm") ~ "LFCM"),
+         est_model = factor(est_model, 
+                            levels = c("afAFT", "AFCM", "lfAFT", "LFCM")),
+         log_value = log(value))
 
-# plot_Brier %>%
-#   filter(beta_type == "simple" & nS == 100) %>%
-#   ggplot(aes(factor(n), value, fill = est_model)) + 
-#   geom_bar(stat = "identity", position = position_dodge()) +
-#   facet_grid(~family) +
-#   labs(x = "n", y = "Brier Score", title = "Average Brier Score Across 50 Simulations",
-#        fill = NULL) +
-#   theme(legend.position = "bottom")
+plot_Brier <- table_Brier %>%
+  ggplot(aes(factor(nS), log_value, fill = est_model)) + 
+  geom_boxplot(outliers = FALSE, outlier.size = 0.1) +
+  scale_fill_manual(values = my_colors) +
+  facet_grid(~family, scales = "free") +
+  labs(x = "density of grid", y = "log Brier score", fill = "model"
+       ) 
 ```
 
 
@@ -227,12 +228,20 @@ table_mise_coef <- all_coef %>%
 # table_mise_coef_2
 
 # plot
-plot_mise_coef <- table_mise_coef %>%
-  pivot_longer(cols = c("mise_coef_aaft", "mise_coef_afcm"),
+plot_mise_coef <- all_coef %>%
+  pivot_longer(cols = c("mise_coef_aaft"),
                names_to = "type",
                values_to = "value") %>%
-  mutate(est_model = case_when(str_detect(type, "aaft") ~ "aAFT",
+  mutate(est_model = case_when(str_detect(type, "aaft") ~ "lognormal aAFT",
                                str_detect(type, "afcm") ~ "AFCM"))
+
+plot_mise_coef %>%
+  ggplot(aes(factor(nS), value, fill = est_model)) + 
+  geom_boxplot(outliers = FALSE, outlier.size = 0.1) +
+  #geom_bar(stat='summary', fun='mean', position = position_dodge()) +
+  facet_grid(family~n, labeller = label_both, scales = "free") +
+  labs(x = "nS", y = "MISE", fill = "Model"
+       )
 
 plot_mise_coef %>%
   #filter(beta_type == "simple") %>%
@@ -241,12 +250,7 @@ plot_mise_coef %>%
   facet_grid(family~n, labeller = label_both) +
   labs(x = "nS", y = "MISE", title = "Average MISE of Coefficient Surface Across 100 Simulations")
 
-# plot_mise_coef %>%
-#   filter(beta_type == "simple" & family != "cox.ph") %>%
-#   ggplot(aes(factor(n), value)) + 
-#   geom_bar(stat = "identity", position = position_dodge()) +
-#   facet_grid(~family) +
-#   labs(x = "n", y = "MISE", title = "Average MISE of Coefficient Function Across 50 Iterations")
+
 ```
 
 
@@ -275,52 +279,36 @@ for (scenario in all_results) {
   }
 }
 
-table_mise_surv <- all_surv %>%
-  group_by(b, beta_type, family, n, nS) %>%
-  summarise(
-    mise_surv_aaft = round(mean(mise_surv_aaft, na.rm = TRUE), 3),
-    mise_surv_afcm = round(mean(mise_surv_afcm, na.rm = TRUE), 3),
-    mise_surv_laft = round(mean(mise_surv_laft, na.rm = TRUE), 3),
-    mise_surv_lfcm = round(mean(mise_surv_lfcm, na.rm = TRUE), 3),
-    .groups = "drop"
-  )
-
-# Create summary table
-table_mise_surv_1 <- create_table(table_mise_surv, var = c("mise_surv_aaft", "mise_surv_afcm", "mise_surv_laft", "mise_surv_lfcm"),
-                              title = "Average MISE of Surivival Function Across 100 Simulations",
-                              subtitle = "Beta type: linear")
-table_mise_surv_1
-# table_mise_surv_2 <- create_table(table_mise_surv, var = c("mise_surv_norm", "mise_surv_cox"), 
-#                               beta_type = "complex",
-#                               title = "Average MISE of Survival Function Across 500 Simulations",
-#                               subtitle = "Beta type: complex")
-# table_mise_surv_2
-
 # boxplot
-plot_surv <- table_mise_surv %>%
+table_surv <- all_surv %>%
+  filter(family != "loglogistic") %>%
   pivot_longer(cols = c("mise_surv_aaft", "mise_surv_afcm", "mise_surv_laft", "mise_surv_lfcm"),
                names_to = "type",
                values_to = "value") %>%
-  mutate(est_model = case_when(str_detect(type, "aaft") ~ "aAFT",
+  mutate(est_model = case_when(str_detect(type, "aaft") ~ "afAFT",
                                str_detect(type, "afcm") ~ "AFCM",
-                               str_detect(type, "laft") ~ "lAFT",
-                               str_detect(type, "lfcm") ~ "LFCM"))
+                               str_detect(type, "laft") ~ "lfAFT",
+                               str_detect(type, "lfcm") ~ "LFCM"),
+         est_model = factor(est_model, 
+                            levels = c("afAFT", "AFCM", "lfAFT", "LFCM")),
+         log_value = log(value))
 
-plot_surv %>%
-  ggplot(aes(factor(nS), value, fill = est_model)) + 
-  geom_bar(stat = "identity", position = position_dodge()) +
-  facet_grid(family~n, labeller = label_both) +
-  labs(x = "nS", y = "MISE", title = "MISE of Estimated Survival Function")   
+plot_surv <- table_surv %>%
+  ggplot(aes(factor(nS), log_value, fill = est_model)) + 
+  geom_boxplot(outliers = FALSE, outlier.size = 0.1) +
+  # geom_bar(stat='summary', fun='mean', position = position_dodge()) +
+  scale_fill_manual(values = my_colors) +
+  facet_grid(~family, scales = "free") +
+  labs(x = "density of grid", y = "log MISE of survival function", fill = "model"
+       ) +
+  theme(
+    strip.text = element_blank(), 
+    strip.background = element_blank()
+  )
 
-# plot_surv %>%
-#   filter(beta_type == "simple" & nS == 100) %>%
-#   ggplot(aes(factor(n), value, fill = est_model)) + 
-#   geom_bar(stat = "identity", position = position_dodge()) +
-#   #geom_boxplot() +
-#   facet_grid(~family) +
-#   labs(x = "n", y = "MISE", title = "Average MISE of Survival Function Across 50 Simulations",
-#        fill = NULL) +
-#   theme(legend.position = "bottom")
+plot_Brier / plot_surv +
+  plot_layout(guides = 'collect', axes = "collect")
+
 ```
 
 

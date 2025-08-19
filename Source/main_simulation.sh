@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --array=1-54%54
+#SBATCH --array=1-27%27
 #SBATCH --job-name=simulation_job
 #SBATCH --partition=wrobel
 #SBATCH --output=main_simulation.out

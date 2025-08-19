@@ -42,10 +42,8 @@ load(here("Source", "dat_func.Rdata")) # load real data
 ###############################################################
 family = c("lognormal", "loglogistic", "cox.ph")
 n = c(100, 200, 500)
-# n = c(100)
 nS = c(50, 100, 500)
-# nS = c(100)
-beta_type = c('simple', 'complex')
+beta_type = c('simple')
 b = c(0.5)
 seed_start = 1000
 N_iter = 500
@@ -58,8 +56,8 @@ params = expand.grid(family = family,
 
 ## define number of simulations and parameter scenarios
 if(doLocal) {
-  scenario = 54
-  N_iter = 1
+  scenario = 1
+  N_iter = 2
 }else{
   # defined from batch script params
   scenario <- as.numeric(commandArgs(trailingOnly=TRUE))
@@ -115,7 +113,7 @@ for(iter in 1:N_iter){
   tic()
   lambda_grid <- exp(seq(log(1000), log(10000), length.out = 500))
   model <- "lognormal"
-  best_lambda <- optimize_lambda(Y, delta, X, data = sim_data$data, family = model, lambda_grid)
+  best_lambda <- optimize_lambda(Y, delta, X, data = sim_data$data, family = model, lambda_grid = lambda_grid)
   fit.faft <- optimize_AFT(Y, delta, X, data = sim_data$data, family = model, lambda = best_lambda, se = TRUE)
   time_stamp <- toc(quiet = TRUE)
   time_faft <- time_stamp$toc - time_stamp$tic
@@ -123,7 +121,7 @@ for(iter in 1:N_iter){
   # loglogistic lfAFT
   tic()
   model <- "loglogistic"
-  best_lambda <- optimize_lambda(Y, delta, X, data = sim_data$data, family = model, lambda_grid)
+  best_lambda <- optimize_lambda(Y, delta, X, data = sim_data$data, family = model, lambda_grid = lambda_grid)
   fit.faft2 <- optimize_AFT(Y, delta, X, data = sim_data$data, family = model, lambda = best_lambda, se = TRUE)
   time_stamp <- toc(quiet = TRUE)
   time_faft2 <- time_stamp$toc - time_stamp$tic
@@ -167,10 +165,14 @@ for(iter in 1:N_iter){
   
   ## calculate the brier score
   tmax <- 120
-  tgrid <- seq(0, tmax, length.out = 1000)
+  nS_pred <- 500
+  tgrid <- seq(0, tmax, len = nS_pred)
   
   S_norm <- cal_stime(fit = fit.norm, data = sim_data_test$data, tgrid = tgrid, family = 'lognormal')
-  S_cox <- cal_stime(fit = fit.cox, data = sim_data_test$data, tgrid = tgrid, family = 'cox.ph')
+  # S_cox <- cal_stime(fit = fit.cox, data = sim_data_test$data, tgrid = tgrid, family = 'cox.ph')
+  df_pred <- sim_data_test$data[rep(1:n, each = nS_pred), ]
+  df_pred$Y <- rep(tgrid, n)
+  S_cox <- matrix(predict(fit.cox, newdata = df_pred, type = "response"), nrow = n, ncol = nS_pred, byrow = TRUE)
   
   eta_faft <- as.numeric(eta_faft)
   scale_faft <- fit.faft$b_hat
@@ -182,16 +184,10 @@ for(iter in 1:N_iter){
   S_faft2 <- outer(eta_faft2, tgrid, 
                    function(eta_faft2_i, tgrid_j) 1 / (1 + exp((log(tgrid_j) - eta_faft2_i) / scale_faft2)))
   
-  # H0_fttm <- H_baseline(t = tgrid, gamma = fit.fttm$gamma_hat, N0 = fit.fttm$N0, Tau = tmax)
-  # eta_fttm <- as.numeric(eta_fttm)
-  # t_new <- outer(eta_fttm, H0_fttm, "+")
-  # S_fttm <- F_epsilon_bar(t_new, r = fit.fttm$r)
-  
   Brier_norm <- cal_Brier(S_norm, Stime = time_test, status = event_test, tgrid)
   Brier_cox <- cal_Brier(S_cox, Stime = time_test, status = event_test, tgrid)
   Brier_faft <- cal_Brier(S_faft, Stime = time_test, status = event_test, tgrid)
   Brier_faft2 <- cal_Brier(S_faft2, Stime = time_test, status = event_test, tgrid)
-  # Brier_fttm <- cal_Brier(S_fttm, Stime = time_test, status = event_test, tgrid)
   
   ###############################################################
   ## pointwise squared errors, pointwise CIs and CMA CIs for estimated beta
@@ -241,16 +237,11 @@ for(iter in 1:N_iter){
                         se_coef_faft2 = se.coef.faft2, 
                         lb_coef_faft2 = fit.faft2$beta1_ci_lower, 
                         ub_coef_faft2 = fit.faft2$beta1_ci_upper
-                        # est_coef_fttm = fit.fttm$beta1_hat, 
-                        # se_coef_fttm = se.coef.fttm, 
-                        # lb_coef_fttm = fit.fttm$beta1_ci_lower, 
-                        # ub_coef_fttm = fit.fttm$beta1_ci_upper
                         ) %>%
     mutate(cover_coef_norm = (true_coef > lb_coef_norm) & (true_coef < ub_coef_norm),
            cover_coef_cox = (true_coef > lb_coef_cox) & (true_coef < ub_coef_cox),
            cover_coef_faft = (true_coef > lb_coef_faft) & (true_coef < ub_coef_faft),
            cover_coef_faft2 = (true_coef > lb_coef_faft2) & (true_coef < ub_coef_faft2),
-           # cover_coef_fttm = (true_coef > lb_coef_fttm) & (true_coef < ub_coef_fttm),
            cover_cma_coef_norm = (true_coef > cma_lb_coef_norm) & (true_coef < cma_ub_coef_norm),
            cover_cma_coef_cox = (true_coef > cma_lb_coef_cox) & (true_coef < cma_ub_coef_cox))
   
@@ -274,16 +265,16 @@ for(iter in 1:N_iter){
   
   # estimated survival function
   S_norm <- cal_stime(fit = fit.norm, data = sim_data$data, tgrid = tgrid, family = 'lognormal')
-  S_cox <- cal_stime(fit = fit.cox, data = sim_data$data, tgrid = tgrid, family = 'cox.ph')
+  # S_cox <- cal_stime(fit = fit.cox, data = sim_data$data, tgrid = tgrid, family = 'cox.ph')
+  df_pred <- sim_data$data[rep(1:n, each = nS_pred), ]
+  df_pred$Y <- rep(tgrid, n)
+  S_cox <- matrix(predict(fit.cox, newdata = df_pred, type = "response"), nrow = n, ncol = nS_pred, byrow = TRUE)
   lp_faft <- as.numeric(fit.faft$lp)
   S_faft <- outer(lp_faft, tgrid, 
                   function(lp_faft_i, tgrid_j) pnorm((log(tgrid_j) - lp_faft_i) / scale_faft, lower.tail = FALSE))
   lp_faft2 <- as.numeric(fit.faft2$lp)
   S_faft2 <- outer(lp_faft2, tgrid, 
                    function(lp_faft2_i, tgrid_j) 1 - 1 / (1 + (exp(lp_faft2_i) / tgrid_j)^(1 / scale_faft2)))
-  # lp_fttm <- as.numeric(fit.fttm$lp)
-  # t_new <- outer(lp_fttm, H0_fttm, "+")
-  # S_fttm <- F_epsilon_bar(t_new, r = fit.fttm$r)
   
   # calculate pointwise squared error and MISE
   df_surv <- data.frame(time = tgrid,
@@ -294,7 +285,6 @@ for(iter in 1:N_iter){
                         se_surv_cox = colMeans((S_true - S_cox)^2),
                         se_surv_faft = colMeans((S_true - S_faft)^2),
                         se_surv_faft2 = colMeans((S_true - S_faft2)^2)
-                        # se_surv_fttm = colMeans((S_true - S_fttm)^2)
                         )
   
   df_info <- data.frame(scenario = scenario,
@@ -310,18 +300,14 @@ for(iter in 1:N_iter){
                         AUC_cox,
                         AUC_faft,
                         AUC_faft2,
-                        # AUC_fttm,
                         Brier_norm,
                         Brier_cox,
                         Brier_faft,
                         Brier_faft2,
-                        # Brier_fttm,
                         time_norm,
-                        #time_sieve = sieve.results[[3]],
                         time_cox,
                         time_faft,
                         time_faft2
-                        # time_fttm
                         )
   
   list(

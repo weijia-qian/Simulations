@@ -2,6 +2,7 @@
 optimize_AFT <- function(Y,      # survival time
                          delta,  # censoring indicator
                          X,      # matrix of functional covariate
+                         Z = NULL, # scalar covaraites
                          data,   # name of dataset
                          family, # "lognormal" or "loglogistic"
                          k = 20, # number of spline basis to construct beta1(s)
@@ -14,18 +15,35 @@ optimize_AFT <- function(Y,      # survival time
   delta <- data$delta
   X <- data$X
   
-  # Generate spline basis matrix
-  nS <- ncol(X) # dimension of the functional predictor
-  s <- seq(0, 1, length.out = nS)  # domain of s
-  B <- bs(s, df = k)  # basis matrix (nS x k)
-  C <- cbind(1, X %*% B / nS) # design matrix (n x (k+1))
+  # Optional scalar covariate matrix
+  if (!is.null(Z)) {
+    if (is.character(Z)) {
+      Z_mat <- as.matrix(data[, Z, drop = FALSE])
+    } else {
+      Z_mat <- as.matrix(Z)
+    }
+  } else {
+    Z_mat <- NULL
+  }
+  
+  # Generate spline basis matrix for functional covariate
+  nS <- ncol(X)
+  s <- seq(0, 1, length.out = nS) 
+  B <- bs(s, df = k)  # nS x k
+  X_mat <- X %*% B / nS # n x k
+  
+  # Design matrix C: intercept + scalar covariates + functional covariate
+  C <- cbind(1, Z_mat, X_mat)
+  p <- ncol(C)
   
   # Initial guesses for beta and b
-  init_params <- c(rep(0, k+1), 1)
-  # init_params <- rep(0, k+2)
+  init_params <- c(rep(0, p), 1)
   
   # Construct the penalty matrix
-  Pen <- penalty_matrix(kp = k+1, nS = nS, a = 0.001)
+  nZ <- if (is.null(Z_mat)) 0 else ncol(Z_mat)
+  Pen <- matrix(0, nrow = p, ncol = p)
+  Pen_block <- penalty_matrix(kp = k, nS = nS, a = 0.001)
+  Pen[(2 + nZ):p, (2 + nZ):p] <- Pen_block
   
   # Optimization
   fit <- optim(
@@ -42,13 +60,17 @@ optimize_AFT <- function(Y,      # survival time
     control = list(maxit = 2000))
   
   # Extract estimates
-  beta0_hat <- fit$par[1]
-  beta1_hat <- as.numeric(fit$par[2:(k+1)] %*% t(B))
-  b_hat <- fit$par[k+2]
-  # theta_hat <- fit$par[k+2]
-  # b_hat <- exp(theta_hat)
-  mu_hat <- C %*% fit$par[1:(k+1)]
-  #RSS <- sum((log(Y) - mu_hat)^2)
+  coef_all <- fit$par[1:p]
+  beta0_hat <- coef_all[1]
+  betaZ_hat <- if (nZ > 0) coef_all[2:(1 + nZ)] else NULL
+  beta1_hat <- as.numeric(coef_all[(2 + nZ):p] %*% t(B))  # evaluate beta(s)
+  b_hat <- fit$par[p + 1]
+  mu_hat <- C %*% coef_all
+
+  # beta0_hat <- fit$par[1]
+  # beta1_hat <- as.numeric(fit$par[2:(k+1)] %*% t(B))
+  # b_hat <- fit$par[k+2]
+  # mu_hat <- C %*% fit$par[1:(k+1)]
   
   # Compute GCV
   GCV <- compute_gcv(Y, delta, C, mu_hat, b_hat, lambda, Pen, family)
@@ -61,26 +83,32 @@ optimize_AFT <- function(Y,      # survival time
     
     # Compute standard error for beta0, beta1, b
     se_beta0 <- sqrt(diag(cov_beta)[1])
-    se_beta1 <- sqrt(rowSums((B %*% cov_beta[2:(k+1), 2:(k+1)]) * B))
-    se_b <- sqrt(diag(cov_beta)[k+2])
-    # se_theta <- sqrt(diag(cov_beta)[k+2])
-    # se_b <- se_theta * b_hat 
+    se_betaZ <- if (nZ > 0) sqrt(diag(cov_beta)[2:(1 + nZ)]) else NULL
+    se_beta1 <- sqrt(rowSums((B %*% cov_beta[(2 + nZ):p, (2 + nZ):p]) * B))
+    se_b <- sqrt(diag(cov_beta)[p + 1])
+    
+    # se_beta1 <- sqrt(rowSums((B %*% cov_beta[2:(k+1), 2:(k+1)]) * B))
+    # se_b <- sqrt(diag(cov_beta)[k+2])
     
     # Confidence intervals
     beta0_ci_lower <- beta0_hat - qnorm(0.975) * se_beta0
     beta0_ci_upper <- beta0_hat + qnorm(0.975) * se_beta0
+    betaZ_ci_lower <- betaZ_hat - qnorm(0.975) * se_betaZ
+    betaZ_ci_upper <- betaZ_hat + qnorm(0.975) * se_betaZ
     beta1_ci_lower <- beta1_hat - qnorm(0.975) * se_beta1
     beta1_ci_upper <- beta1_hat + qnorm(0.975) * se_beta1
     b_ci_lower <- b_hat - qnorm(0.975) * se_b
     b_ci_upper <- b_hat + qnorm(0.975) * se_b
     
-    return(list(beta0_hat = beta0_hat, beta1_hat = beta1_hat, b_hat = b_hat, lp = mu_hat, GCV = GCV,
-                family = family, lambda = lambda, beta0_ci_lower = beta0_ci_lower, beta0_ci_upper = beta0_ci_upper,
+    return(list(beta0_hat = beta0_hat, betaZ_hat = betaZ_hat, beta1_hat = beta1_hat, b_hat = b_hat, lp = mu_hat, GCV = GCV,
+                family = family, lambda = lambda, Z_names = Z,
+                beta0_ci_lower = beta0_ci_lower, beta0_ci_upper = beta0_ci_upper,
+                betaZ_ci_lower = betaZ_ci_lower, betaZ_ci_upper = betaZ_ci_upper,
                 beta1_ci_lower = beta1_ci_lower, beta1_ci_upper = beta1_ci_upper, b_ci_lower = b_ci_lower, b_ci_upper = b_ci_upper))
   } else {
     
-    return(list(beta0_hat = beta0_hat, beta1_hat = beta1_hat, b_hat = b_hat, lp = mu_hat, GCV = GCV,
-                family = family, lambda = lambda))
+    return(list(beta0_hat = beta0_hat, betaZ_hat = betaZ_hat, beta1_hat = beta1_hat, b_hat = b_hat, lp = mu_hat, GCV = GCV,
+                family = family, lambda = lambda, Z_names = Z))
   }
 }
 
@@ -92,8 +120,6 @@ penalty_matrix <- function(kp, nS, a){
   diff2 <- matrix(rep(c(1, -2, 1, rep(0, D-2)), D - 2)[1:((D-2) * D)], D-2, D, byrow = TRUE)
   P2 <- t(spline_basis) %*% t(diff2) %*% diff2 %*% spline_basis # not full rank
   Pen <- a * diag(kp) + (1-a) * P2
-  Pen[1, ] <- 0 # no penalty on the intercept
-  Pen[, 1] <- 0 # no penalty on the intercept
   return(Pen)
 }
 
@@ -102,8 +128,6 @@ penalized_loglik <- function(params, Y, delta, X, family, lambda, Pen) {
   # Extract parameters
   beta_coef <- params[-length(params)]
   b <- params[length(params)]
-  # theta <- params[length(params)]
-  # b <- exp(theta)
   
   # Ensure b > 0
   if (b <= 0) {
@@ -145,8 +169,6 @@ penalized_score <- function(params, Y, delta, X, family, lambda, Pen) {
   # Extract parameters
   beta_coef <- params[-length(params)]
   b <- params[length(params)]
-  # theta <- params[length(params)]
-  # b <- exp(theta)
 
   mu <- X %*% beta_coef
   z <- (log(Y) - mu) / b
@@ -161,7 +183,6 @@ penalized_score <- function(params, Y, delta, X, family, lambda, Pen) {
     
     # Score for b
     score_b <- sum(delta * (-1 / b + z^2 / b) + (1 - delta) * f_z * z / (b * S_z))
-    # score_theta <- score_b * b
     
   } else if (family == "loglogistic"){
     # Logistic CDF
@@ -172,7 +193,6 @@ penalized_score <- function(params, Y, delta, X, family, lambda, Pen) {
     
     # Score for b
     score_b <- sum(- delta + delta * (2*p_z - 1) * z + (1 - delta) * p_z * z) / b
-    # score_theta <- score_b * b
   }
 
   return(-c(score_beta, score_b)) # negative score for minimization
@@ -180,13 +200,9 @@ penalized_score <- function(params, Y, delta, X, family, lambda, Pen) {
 
 
 ##### Function to find optimal lambda using GCV #####
-optimize_lambda <- function(Y, delta, X, data, family, lambda_grid) {
-  gcv_values <- sapply(lambda_grid, function(lambda) optimize_AFT(Y, delta, X, data, family, lambda = lambda)[5])
+optimize_lambda <- function(Y, delta, X, Z = NULL, data, family, lambda_grid) {
+  gcv_values <- sapply(lambda_grid, function(lambda) optimize_AFT(Y, delta, X, Z, data, family, lambda = lambda)$GCV)
   optimal_lambda <- lambda_grid[which.min(gcv_values)]
-  # search lambda on a finer grid
-  # new_lambda_grid <- seq(optimal_lambda - 100, optimal_lambda + 100, by = 1)
-  # new_gcv_values <- sapply(new_lambda_grid, function(lambda) optimize_AFT(Y, delta, X, data, family, lambda = lambda)[5])
-  # optimal_lambda <- new_lambda_grid[which.min(new_gcv_values)]
   return(optimal_lambda)
 }
 
@@ -260,7 +276,7 @@ compute_gcv <- function(Y, delta, C, mu_hat, b_hat, lambda, Pen, family = c("log
 ##### Function to return the linear predictor for new obs #####
 predict_AFT <- function(fit, newdata) {
   
-  # extract new X
+  # extract new covariates
   X_new <- newdata$X
   if (is.null(X_new)) stop("`newdata` must have an element named `X`.")
   if (!is.matrix(X_new)) X_new <- as.matrix(X_new)
@@ -268,6 +284,7 @@ predict_AFT <- function(fit, newdata) {
   # extract AFT parameters
   beta0 <- fit$beta0_hat
   beta1 <- fit$beta1_hat
+  betaZ <- fit$betaZ_hat
   
   # check dimensions
   nS <- ncol(X_new)
@@ -278,8 +295,22 @@ predict_AFT <- function(fit, newdata) {
     ))
   }
   
-  # compute linear predictor
-  mu_new <- as.vector(beta0 + (X_new %*% beta1) / nS)
+  # check scalar covariates
+  Z_names <- fit$Z_names
+  if (!is.null(betaZ)) {
+    if (is.null(Z_names)) stop("Scalar covariates estimated but Z_names not found in `fit`.")
+    if (!all(Z_names %in% names(newdata))) {
+      missing <- Z_names[!Z_names %in% names(newdata)]
+      stop("The following scalar covariates are missing in newdata: ", paste(missing, collapse = ", "))
+    }
+    Z_mat <- as.matrix(newdata[, Z_names, drop = FALSE])
+    # compute linear predictor
+    mu_new <- as.vector(beta0 + Z_mat %*% betaZ + (X_new %*% beta1) / nS)
+  } else {
+    mu_new <- as.vector(beta0 + (X_new %*% beta1) / nS)
+  }
+
+  
   
   # preserve row names if present
   if (!is.null(rownames(X_new))) {

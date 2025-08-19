@@ -22,8 +22,20 @@ suppressPackageStartupMessages(library(scam))
 suppressPackageStartupMessages(library(splines))
 suppressPackageStartupMessages(library(survival))
 suppressPackageStartupMessages(library(tidyverse))
+library(patchwork)
 library(corrplot)
 library(glmnet)
+
+my_colors <- c(
+  "FTTM" = "#440154",
+  # "mgcv LFCM" = "#414487",
+  "LFCM" = "#2A788E",
+  "loglogistic lfAFT" = "#7AD151",
+  "lognormal lfAFT" = "#FDE725",
+  "AFCM" = "#E03C8A",
+  "afAFT" = "#B481BB",
+  "functional logistic" = "#2EA9DF"
+)
 
 source(here("Source", "calc_auc_brier.R"))
 source(here("Source", "fit_penalized_aft.R"))
@@ -58,31 +70,28 @@ df_wide <- df %>%
   pivot_wider(names_from = frame, values_from = pupil_sm_pctChg, names_prefix = "pct_chg_")
 
 # separate datasets for post1 & post2
-df_post1_r <- df_wide[df_wide$mtm == "1_Post1" & df_wide$eye == "Right", ]
-df_post1_r <- df_post1_r %>% select(-pct_chg_120) # data issue in the last frame
-#df_post2_r <- df_wide[df_wide$mtm == "2_Post2" & df_wide$eye == "Right", ]
+df_post2_r <- df_wide[df_wide$mtm == "2_Post2" & df_wide$eye == "Right", ]
 #df_post1_l <- df_wide[df_wide$mtm == "1_Post1" & df_wide$eye == "Left", ]
-# setdiff(df_post2_r$ptid, df_post1_r$ptid)
+# setdiff(df_post2_r$ptid, df_post2_r$ptid)
 # cat("post1: time since use\n")
-# summary(df_post1_r$time_since_use)
+# summary(df_post2_r$time_since_use)
 # cat("post2: time since use\n")
 # summary(df_post2_r$time_since_use)
 
 # time grid
-sgrid <- unique(df$time)[-120] # remove the last frame
-mean(df_post1_r$pct_chg_119)
-#plot(df_post1_r$pct_chg_120, xlab= "Subject")
+sgrid <- unique(df$time) # remove the last frame
+#plot(df_post2_r$pct_chg_120, xlab= "Subject")
 ```
 
 
 ```{r}
-age_mean_user <- mean(df_post1_r[df_post1_r$is_user == 1,]$age_in_years, na.rm = TRUE)
-age_mean_nonuser <- mean(df_post1_r[df_post1_r$is_user == 0,]$age_in_years, na.rm = TRUE)
-bmi_mean_user <- median(df_post1_r[df_post1_r$is_user == 1,]$bmi, na.rm = TRUE)
-bmi_mean_nonuser <- median(df_post1_r[df_post1_r$is_user == 0,]$bmi, na.rm = TRUE)
-pupil_means_user <- t(as.matrix(colMeans(df_post1_r[df_post1_r$is_user == 1, -c(1:8)])[-120]))
-pupil_means_nonuser <- t(as.matrix(colMeans(df_post1_r[df_post1_r$is_user == 0, -c(1:8)])[-120]))
-df_pupil_means <- data.frame(time = seq(1:119),
+age_mean_user <- mean(df_post2_r[df_post2_r$is_user == 1,]$age_in_years, na.rm = TRUE)
+age_mean_nonuser <- mean(df_post2_r[df_post2_r$is_user == 0,]$age_in_years, na.rm = TRUE)
+bmi_mean_user <- median(df_post2_r[df_post2_r$is_user == 1,]$bmi, na.rm = TRUE)
+bmi_mean_nonuser <- median(df_post2_r[df_post2_r$is_user == 0,]$bmi, na.rm = TRUE)
+pupil_means_user <- t(as.matrix(colMeans(df_post2_r[df_post2_r$is_user == 1, -c(1:8)])))
+pupil_means_nonuser <- t(as.matrix(colMeans(df_post2_r[df_post2_r$is_user == 0, -c(1:8)])))
+df_pupil_means <- data.frame(time = seq(1:120),
                              pupil_means_user = as.numeric(pupil_means_user),
                              pupil_means_nonuser = as.numeric(pupil_means_nonuser))
 ```
@@ -90,37 +99,50 @@ df_pupil_means <- data.frame(time = seq(1:119),
 
 ```{r}
 # plot pupil light response curves
-df_long <- df_post1_r %>%
+df_long <- df_post2_r %>%
   pivot_longer(
     cols = starts_with("pct"),
     names_to = "time",
     values_to = "pct_chg"
   ) %>%
-  mutate(time = as.numeric(gsub("pct_chg_", "", time)))  # convert "t1", "t2" to numeric
+  mutate(time = rep(unique(df$time), times = nrow(df_post2_r)),
+         use = factor(is_user, labels = c("Didn't smoke", "Smoked")))
 
-ggplot(df_long) +
+
+# Sample 10 individuals
+set.seed(916)  # for reproducibility
+sample_ids <- df_post2_r %>%
+  # group_by(is_user) %>%
+  slice_sample(n = 10) %>%
+  pull(ptid)
+
+# Filter and reshape for plotting
+df_long_sample <- df_long %>%
+  filter(ptid %in% sample_ids)
+
+# Plot
+p1 <- ggplot(df_long) +
   geom_line(aes(x = time, y = pct_chg, group = ptid), color = "lightgray") +
-  geom_line(data = df_pupil_means, aes(x = time, y = pupil_means_nonuser, color = "Average Nonuser"), size = 1) +
-  geom_line(data = df_pupil_means, aes(x = time, y = pupil_means_user, color = "Average User"), size = 1) +
+  geom_line(data = df_long_sample, aes(x = time, y = pct_chg, group = ptid, color = use), size = 0.8) +
   labs(
-    x = "Time",
-    y = "Percent Change in Pupil Size",
+    x = "Time since light stimulus (seconds)",
+    y = "Percent change in pupil size",
     color = ""
   ) +
   scale_color_manual(
-    values = c("Average Nonuser" = "blue", "Average User" = "red")
+    values = c("Didn't smoke" = "#FF7043", "Smoked" = "#2E7D32")
   ) +
   theme_minimal() +
   theme(legend.position = "bottom")
 
 # line plot for survival
-set.seed(22100)
-plot_survival <- df_post1_r %>%
-  slice_sample(n = 10) %>%
+plot_survival <- df_post2_r %>%
+  filter(ptid %in% sample_ids) %>%
   mutate(id = as.integer(factor(ptid)),
-         event_time = ifelse(time_since_use == 480, 75, time_since_use))
+         event_time = ifelse(time_since_use == 480, 150, time_since_use))
+
 # Plot with thicker lines, filled shapes (circle for death, triangle for censored)
-ggplot(data = plot_survival, aes(x = event_time, y = id)) +
+p2 <- ggplot(data = plot_survival, aes(x = event_time, y = id)) +
   geom_segment(aes(x = 0, xend = event_time, yend = id), color = "grey55", size = 1.2) +  # Thicker lines
   geom_point(aes(color = factor(is_user), shape = factor(is_user)), size = 3) +  # End markers
   scale_color_manual(
@@ -140,10 +162,12 @@ ggplot(data = plot_survival, aes(x = event_time, y = id)) +
   theme_minimal() +
   theme(
     legend.position = "bottom",
-    text = element_text(size = 12),
-    axis.title = element_text(size = 14),
+    # text = element_text(size = 12),
+    # axis.title = element_text(size = 14),
     axis.text.y = element_blank()
   )
+
+p1 + p2
 ```
 
 ```{r}
@@ -229,22 +253,16 @@ fit_mgcv <- function(data, family, sgrid, bs = "ps", k = 20){
 
 ```{r, linear models}
 # linear functional log-normal AFT model
-fit1.laft <- fit_mgcv(data = df_post1_r, family = "LAFT", sgrid = sgrid)
-#fit2.laft <- fit_mgcv(data = df_post2_r, family = "LAFT", sgrid = sgrid)
-summary(fit1.laft [[1]])
-#summary(fit2.laft[[1]])
+fit1.laft <- fit_mgcv(data = df_post2_r, family = "LAFT", sgrid = sgrid)
 
 # linear functional Cox model
-fit1.lfcm <- fit_mgcv(data = df_post1_r, family = "LFCM", sgrid = sgrid)
-#fit2.lfcm <- fit_mgcv(data = df_post2_r, family = "LFCM", sgrid = sgrid)
-summary(fit1.lfcm[[1]])
-#summary(fit2.lfcm)
+fit1.lfcm <- fit_mgcv(data = df_post2_r, family = "LFCM", sgrid = sgrid)
 
 # lognormal lfAFT
-fit1.faft <- fit_mgcv(data = df_post1_r, family = "lognormal", sgrid = sgrid) 
+fit1.faft <- fit_mgcv(data = df_post2_r, family = "lognormal", sgrid = sgrid) 
 
 # loglogistic lfAFT
-fit1.faft2 <- fit_mgcv(data = df_post1_r, family = "loglogistic", sgrid = sgrid)
+fit1.faft2 <- fit_mgcv(data = df_post2_r, family = "loglogistic", sgrid = sgrid)
 ```
 
 
@@ -266,7 +284,7 @@ plot_coef <- data.frame(time = sgrid,
                         coef_lfcm_ub = as.numeric(coef.est.lfcm[[1]] + qnorm(0.975) * coef.est.lfcm[[2]])
                         )
   
-p_coef1 <- ggplot(data = plot_coef, aes(x = time)) +
+p_coef2 <- ggplot(data = plot_coef, aes(x = time)) +
     geom_line(aes(y = coef_faft2, color = "loglogistic lfAFT"), size = 1) +
     geom_line(aes(y = coef_laft, color = "lognormal lfAFT"), size = 1) +
     geom_line(aes(y = coef_lfcm, color = "LFCM"), size = 1) +
@@ -280,38 +298,41 @@ p_coef1 <- ggplot(data = plot_coef, aes(x = time)) +
     labs(
       x = "Seconds since light stimulus (s)",
       y = expression(beta~"(s)"),
-      title = "40 min assessment",
+      title = "100 min assessment",
       color = NULL,
       fill = NULL
     ) +
     theme_minimal() +
     theme(legend.position="bottom")
+
+p_coef1 + p_coef2 +
+  plot_layout(guides = 'collect', axes = "collect")
 ```
 
 
 ```{r, additive models}
 # additive lognormal AFT model
-fit1.aaft <- fit_mgcv(data = df_post1_r, family = "AAFT", sgrid = sgrid)
+fit1.aaft <- fit_mgcv(data = df_post2_r, family = "AAFT", sgrid = sgrid)
 summary(fit1.aaft[[1]])
 # AFCM
-fit1.afcm <- fit_mgcv(data = df_post1_r, family = "AFCM", sgrid = sgrid)
+fit1.afcm <- fit_mgcv(data = df_post2_r, family = "AFCM", sgrid = sgrid)
 summary(fit1.afcm[[1]])
 
-vis.gam(fit1.aaft[[1]], view = c("S", "X"), plot.type = "contour", color = "topo", n.grid = 100,
-        xaxt = "n", 
-        main = "Estimated Surface F(s,x)",
-        xlab = "Senconds since light stimulus (s)", ylab = "Percent change in pupil size (x)")
-axis(side = 1, at = c(0, 1, 2, 3, 4), labels = c("0","1","2","3","4"))
+# vis.gam(fit1.aaft[[1]], view = c("S", "X"), plot.type = "contour", color = "topo", n.grid = 100,
+#         xaxt = "n", 
+#         main = "Estimated Surface F(s,x)",
+#         xlab = "Senconds since light stimulus (s)", ylab = "Percent change in pupil size (x)")
+# axis(side = 1, at = c(0, 1, 2, 3, 4), labels = c("0","1","2","3","4"))
 
-xgrid <- as.matrix(seq(-80, 20, len = 119), ncol = 1)
-sgrid <- seq(0, 4, len = 119)
+xgrid <- as.matrix(seq(-80, 20, len = 120), ncol = 1)
+sgrid <- seq(0, 4, len = 120)
 df_pred <- expand.grid(X = xgrid, S = sgrid)
 df_pred$L = 1
 df_pred$age_in_years = age_mean_user
 df_pred$bmi = bmi_mean_user
 pred_smooth_aaft <- predict(fit1.aaft[[1]], newdata = df_pred, type = "terms", terms = "ti(X,S):L", se = TRUE)
 pred_smooth_afcm <- predict(fit1.afcm[[1]], newdata = df_pred, type = "terms", terms = "ti(X,S):L", se = TRUE)
-pred_smooth <- pred_smooth_aaft
+pred_smooth <- pred_smooth_afcm 
 pred_smooth$lb = pred_smooth$fit - qnorm(0.975) * pred_smooth$se.fit
 pred_smooth$ub = pred_smooth$fit + qnorm(0.975) * pred_smooth$se.fit
 pred_smooth$sig = !(pred_smooth$lb < 0 & pred_smooth$ub > 0)
@@ -324,13 +345,13 @@ filled.contour(x = sgrid, y = xgrid, z = df_surface,
                color.palette = topo.colors,
                xlab = "Senconds since light stimulus (s)",
                ylab = "Percent change in pupil size (x)",
-               main = "Estimated F(s,x) from afAFT")
+               main = "Estimated F(s,x) from AFCM")
 filled.contour(x = sgrid, y = xgrid, z = df_surface_masked,
                zlim = zlim,
                color.palette = topo.colors,
                xlab = "Senconds since light stimulus (s)",
                ylab = "Percent change in pupil size (x)",
-               main = "Estimated F(s,x) from afAFT with Significance")
+               main = "Estimated F(s,x) from AFCM with Significance")
 
 
 # ggplot
@@ -377,7 +398,7 @@ p_aaft + p_afcm +
 
 ```{r, CDF}
 ### CDF
-cdf_faft <- 1 - fit1.faft[[2]]
+# cdf_faft <- 1 - fit1.faft[[2]]
 cdf_faft2 <- 1 - fit1.faft2[[2]]
 cdf_laft <- 1 - fit1.laft[[2]]
 cdf_aaft <- 1 - fit1.aaft[[2]]
@@ -386,9 +407,9 @@ cdf_afcm <- 1 - fit1.afcm[[2]]
 
 
 tgrid <- seq(0, 120, len = 1000) 
-for (i in 1) {
+i=1
   plot_surv <- data.frame(time = tgrid,
-                          cdf_faft = cdf_faft[i, ],
+                          # cdf_faft = cdf_faft[i, ],
                           cdf_faft2 = cdf_faft2[i, ],
                           cdf_laft = cdf_laft[i, ],
                           cdf_aaft = cdf_aaft[i, ],
@@ -396,33 +417,30 @@ for (i in 1) {
                           cdf_afcm = cdf_afcm[i, ]
                           )
   
-  p <- ggplot(data = plot_surv, aes(x = time)) +
-    geom_line(aes(y = cdf_faft, color = "lognormal lfAFT"), size = 1) +
+  p_user <- ggplot(data = plot_surv, aes(x = time)) +
+    # geom_line(aes(y = cdf_faft, color = "lognormal lfAFT"), size = 1) +
     geom_line(aes(y = cdf_faft2, color = "loglogistic lfAFT"), size = 1) +
-    geom_line(aes(y = cdf_laft, color = "mgcv lfAFT"), size = 1) +
-    geom_line(aes(y = cdf_aaft, color = "mfcv afAFT"), size = 1) +
-    geom_line(aes(y = cdf_lfcm, color = "mgcv LFCM"), size = 1) +
-    geom_line(aes(y = cdf_afcm, color = "mgcv AFCM"), size = 1) +
-    scale_color_manual(values = hue_pal()(6)) +
+    geom_line(aes(y = cdf_laft, color = "lognormal lfAFT"), size = 1) +
+    geom_line(aes(y = cdf_aaft, color = "afAFT"), size = 1) +
+    geom_line(aes(y = cdf_lfcm, color = "LFCM"), size = 1) +
+    geom_line(aes(y = cdf_afcm, color = "AFCM"), size = 1) +
+    scale_color_manual(values = my_colors,
+                       breaks = c("loglogistic lfAFT", "lognormal lfAFT", "afAFT", "LFCM", "AFCM")) +
     labs(
-      x = "t (minutes)",
+      x = "Time since smoking (minutes)",
       y = expression("P(T"<="t)"),
-      title = "Estimated CDF for An Average Cannabis User",
+      title = "Average cannabis user",
       color = NULL
     ) +
-    #xlim(0, 125) +
     ylim(0, 1) +
-    theme_minimal()
-    #theme(aspect.ratio = 1, legend.position="bottom")
-  
-  print(p)
-}
+    theme_minimal() +
+    theme(legend.position="bottom")
 
 ```
 
 ```{r, CDF}
 ### CDF
-cdf_faft <- 1 - fit1.faft[[3]]
+# cdf_faft <- 1 - fit1.faft[[3]]
 cdf_faft2 <- 1 - fit1.faft2[[3]]
 cdf_laft <- 1 - fit1.laft[[3]]
 cdf_aaft <- 1 - fit1.aaft[[3]]
@@ -431,9 +449,9 @@ cdf_afcm <- 1 - fit1.afcm[[3]]
 
 
 tgrid <- seq(0, 120, len = 1000) 
-for (i in 1) {
+
   plot_surv <- data.frame(time = tgrid,
-                          cdf_faft = cdf_faft[i, ],
+                          # cdf_faft = cdf_faft[i, ],
                           cdf_faft2 = cdf_faft2[i, ],
                           cdf_laft = cdf_laft[i, ],
                           cdf_aaft = cdf_aaft[i, ],
@@ -441,28 +459,27 @@ for (i in 1) {
                           cdf_afcm = cdf_afcm[i, ]
                           )
   
-  p <- ggplot(data = plot_surv, aes(x = time)) +
-    geom_line(aes(y = cdf_faft, color = "lognormal lfAFT"), size = 1) +
+  p_nonuser <- ggplot(data = plot_surv, aes(x = time)) +
+    # geom_line(aes(y = cdf_faft, color = "lognormal lfAFT"), size = 1) +
     geom_line(aes(y = cdf_faft2, color = "loglogistic lfAFT"), size = 1) +
-    geom_line(aes(y = cdf_laft, color = "mgcv lfAFT"), size = 1) +
-    geom_line(aes(y = cdf_aaft, color = "mfcv afAFT"), size = 1) +
-    geom_line(aes(y = cdf_lfcm, color = "mgcv LFCM"), size = 1) +
-    geom_line(aes(y = cdf_afcm, color = "mgcv AFCM"), size = 1) +
-    scale_color_manual(values = hue_pal()(6)) +
+    geom_line(aes(y = cdf_laft, color = "lognormal lfAFT"), size = 1) +
+    geom_line(aes(y = cdf_aaft, color = "afAFT"), size = 1) +
+    geom_line(aes(y = cdf_lfcm, color = "LFCM"), size = 1) +
+    geom_line(aes(y = cdf_afcm, color = "AFCM"), size = 1) +
+    scale_color_manual(values = my_colors,
+                       breaks = c("loglogistic lfAFT", "lognormal lfAFT", "afAFT", "LFCM", "AFCM")) +
     labs(
-      x = "t (minutes)",
+      x = "Time since smoking (minutes)",
       y = expression("P(T"<="t)"),
-      title = "Estimated CDF for An Average Cannabis Nonuser",
+      title = "Average cannabis nonuser",
       color = NULL
     ) +
-    # xlim(0, 120) +
     ylim(0, 1) +
-    theme_minimal()
-    # theme(aspect.ratio = 0.8, legend.position="bottom")
-  
-  print(p)
-}
+    theme_minimal() +
+    theme(legend.position="bottom")
 
+p_user + p_nonuser +
+  plot_layout(guides = 'collect', axes = "collect")
 ```
 
 ```{r, hazard function}
@@ -542,17 +559,17 @@ ggplot(hazard_df) +
 
 ```{r, functional logstic regression}
 library(tidyfun)
-df_post1_r$X_mat <- as.matrix(df_post1_r[, grep("^pct_chg_", colnames(df_post1_r))])
-df_post1_r$is_user_45 <- ifelse(df_post1_r$time_since_use <= 45, 1, 0)
-df_post1_r$is_user_60 <- ifelse(df_post1_r$time_since_use <= 60, 1, 0)
-df_post1_r$is_user_120 <- ifelse(df_post1_r$time_since_use <= 120, 1, 0)
+df_post2_r$X_mat <- as.matrix(df_post2_r[, grep("^pct_chg_", colnames(df_post2_r))])
+df_post2_r$is_user_45 <- ifelse(df_post2_r$time_since_use <= 45, 1, 0)
+df_post2_r$is_user_60 <- ifelse(df_post2_r$time_since_use <= 60, 1, 0)
+df_post2_r$is_user_120 <- ifelse(df_post2_r$time_since_use <= 120, 1, 0)
 
 fit1.logistic = pfr(is_user_45 ~ age_in_years + bmi + lf(X_mat, argvals = sgrid), 
-                    family = binomial(), method = "REML", data = df_post1_r)
+                    family = binomial(), method = "REML", data = df_post2_r)
 fit2.logistic = pfr(is_user_60 ~ age_in_years + bmi + lf(X_mat, argvals = sgrid), 
-                    family = binomial(), method = "REML", data = df_post1_r)
+                    family = binomial(), method = "REML", data = df_post2_r)
 fit3.logistic = pfr(is_user_120 ~ age_in_years + bmi + lf(X_mat, argvals = sgrid), 
-                    family = binomial(), method = "REML", data = df_post1_r)
+                    family = binomial(), method = "REML", data = df_post2_r)
 summary(fit1.logistic)
 summary(fit2.logistic)
 summary(fit3.logistic)
@@ -602,13 +619,13 @@ n_folds <- 10 # number of folds
 ### variables that store the c-index and Brier's score in each calculation
 Brier_faft <- Brier_faft2 <- Brier_laft <- Brier_aaft <- Brier_lfcm <- Brier_afcm <- Brier_logistic <- rep(0, n_folds)
 ### use "createFolds" function from "caret" package to divide real data into n_folds folds
-fold <- createFolds(df_post1_r$time_since_use, k = n_folds, list = FALSE)
+fold <- createFolds(df_post2_r$time_since_use, k = n_folds, list = FALSE)
 
 ## run cross validation
 for(k in 1:n_folds){
     ## split train and test data
-    train_data <- df_post1_r[-which(fold == k),]
-    test_data <- df_post1_r[which(fold == k),]
+    train_data <- df_post2_r[-which(fold == k),]
+    test_data <- df_post2_r[which(fold == k),]
     
     train_data$X_mat <- as.matrix(train_data[, grep("^pct_chg_", colnames(train_data))])
     test_data$X_mat <- as.matrix(test_data[, grep("^pct_chg_", colnames(test_data))])
@@ -647,8 +664,8 @@ for(k in 1:n_folds){
     event_train <- train_data$is_user
     
     ## fit each model using train data
-    fit_faft <- fit_mgcv(data = train_data, family = "FAFT", sgrid = sgrid)[[1]]
-    fit_faft2 <- fit_mgcv(data = train_data, family = "FAFT2", sgrid = sgrid)[[1]]
+    fit_faft <- fit_mgcv(data = train_data, family = "lognormal", sgrid = sgrid)[[1]]
+    fit_faft2 <- fit_mgcv(data = train_data, family = "loglogistic", sgrid = sgrid)[[1]]
     fit_laft <- fit_mgcv(data = train_data, family = "LAFT", sgrid = sgrid)[[1]]
     fit_aaft <- fit_mgcv(data = train_data, family = "AAFT", sgrid = sgrid)[[1]]
     fit_lfcm <- fit_mgcv(data = train_data, family = "LFCM", sgrid = sgrid)[[1]]
@@ -663,14 +680,7 @@ for(k in 1:n_folds){
     eta_aaft <- predict(fit_aaft, test_data2, type = "link")
     eta_lfcm <- predict(fit_lfcm, test_data2, type = "link")
     eta_afcm <- predict(fit_afcm, test_data2, type = "link")
-    eta_logistic <- predict(fit1.logistic, newdata = df_post1_r, type = "response")
-    
-    ## calculate the cross-validated c-index
-    # cindex_laft[k] <- cal_c(marker = -eta_laft, Stime = time_test, status = event_test)
-    # cindex_aaft[k] <- cal_c(marker = -eta_aaft, Stime = time_test, status = event_test)
-    # cindex_lfcm[k] <- cal_c(marker = eta_lfcm, Stime = time_test, status = event_test)
-    # cindex_afcm[k] <- cal_c(marker = eta_afcm, Stime = time_test, status = event_test)
-    # cindex_logistic[k] <- cal_c(marker = eta_logistic, Stime = time_test, status = event_test)
+    eta_logistic <- predict(fit1.logistic, newdata = df_post2_r, type = "response")
 
     ## calculate the cross-validated brier score
     scale_faft <- fit_faft$b_hat
@@ -713,19 +723,19 @@ surv.lfcm <- cal_stime(fit = fit1.lfcm[[1]], data = fit1.lfcm[[4]], tgrid = tgri
 surv.aaft <- cal_stime(fit = fit1.aaft[[1]], data = fit1.aaft[[4]], tgrid = tgrid, family = 'lognormal')
 surv.afcm <- cal_stime(fit = fit1.afcm[[1]], data = fit1.afcm[[4]], tgrid = tgrid, family = 'cox.ph')
 
-surv45 <- df_post1_r$time_since_use > 45
+surv45 <- df_post2_r$time_since_use > 45
 surv45.laft <- surv.laft[, 46] > threshold
 surv45.lfcm <- surv.lfcm[, 46] > threshold
 surv45.aaft <- surv.aaft[, 46] > threshold
 surv45.afcm <- surv.afcm[, 46] > threshold
-surv45.logistic <- predict(fit1.logistic, newdata = df_post1_r, type = "response") < threshold
+surv45.logistic <- predict(fit1.logistic, newdata = df_post2_r, type = "response") < threshold
 
-surv120 <- df_post1_r$time_since_use > 120
+surv120 <- df_post2_r$time_since_use > 120
 surv120.laft <- surv.laft[, 121] > threshold
 surv120.lfcm <- surv.lfcm[, 121] > threshold
 surv120.aaft <- surv.aaft[, 121] > threshold
 surv120.afcm <- surv.afcm[, 121] > threshold
-surv120.logistic <- predict(fit3.logistic, newdata = df_post1_r, type = "response") < threshold
+surv120.logistic <- predict(fit3.logistic, newdata = df_post2_r, type = "response") < threshold
 
 # cutoff = 45 min
 df_surv45 <- data.frame(model = rep(c("Linear AFT", "Additive AFT", "LFCM", "AFCM", "Functional Logistic"), each = 123),
@@ -758,7 +768,7 @@ roc.laft <- roc(surv45, surv.laft[, 46])
 roc.aaft <- roc(surv45, surv.aaft[, 46])
 roc.lfcm <- roc(surv45, surv.lfcm[, 46])
 roc.afcm <- roc(surv45, surv.afcm[, 46])
-roc.logistic <- roc(surv45, 1 - predict(fit1.logistic, newdata = df_post1_r, type = "response"))
+roc.logistic <- roc(surv45, 1 - predict(fit1.logistic, newdata = df_post2_r, type = "response"))
 
 df_auc45 <- data.frame(model = c("Linear AFT", "Additive AFT", "LFCM", "AFCM", "Functional Logistic"),
                        AUC = round(c(auc(roc.laft), auc(roc.aaft), auc(roc.lfcm), auc(roc.afcm), auc(roc.logistic)), 4))
@@ -767,7 +777,7 @@ roc.laft <- roc(surv120, surv.laft[, 121])
 roc.aaft <- roc(surv120, surv.aaft[, 121])
 roc.lfcm <- roc(surv120, surv.lfcm[, 121])
 roc.afcm <- roc(surv120, surv.afcm[, 121])
-roc.logistic <- roc(surv120, 1 - predict(fit3.logistic, newdata = df_post1_r, type = "response"))
+roc.logistic <- roc(surv120, 1 - predict(fit3.logistic, newdata = df_post2_r, type = "response"))
 
 df_auc120 <- data.frame(model = c("Linear AFT", "Additive AFT", "LFCM", "AFCM", "Functional Logistic"),
                        AUC = round(c(auc(roc.laft), auc(roc.aaft), auc(roc.lfcm), auc(roc.afcm), auc(roc.logistic)), 4))
@@ -778,7 +788,7 @@ prob.laft <- surv.laft[, 46]
 prob.aaft <- surv.aaft[, 46]
 prob.lfcm <- surv.lfcm[, 46]
 prob.afcm <- surv.afcm[, 46]
-prob.logistic <- 1 - predict(fit1.logistic, newdata = df_post1_r, type = "response")
+prob.logistic <- 1 - predict(fit1.logistic, newdata = df_post2_r, type = "response")
 
 df_brier45 <- data.frame(model = c("Linear AFT", "Additive AFT", "LFCM", "AFCM", "Functional Logistic"),
                          brier = round(c(mean((prob.laft - surv45)^2), 
@@ -792,7 +802,7 @@ prob.laft <- surv.laft[, 121]
 prob.aaft <- surv.aaft[, 121]
 prob.lfcm <- surv.lfcm[, 121]
 prob.afcm <- surv.afcm[, 121]
-prob.logistic <- 1 - predict(fit3.logistic, newdata = df_post1_r, type = "response")
+prob.logistic <- 1 - predict(fit3.logistic, newdata = df_post2_r, type = "response")
 
 df_brier120 <- data.frame(model = c("Linear AFT", "Additive AFT", "LFCM", "AFCM", "Functional Logistic"),
                          brier = round(c(mean((prob.laft - surv120)^2), 
@@ -810,7 +820,7 @@ prob.laft <- surv.laft[, 46]
 prob.aaft <- surv.aaft[, 46]
 prob.lfcm <- surv.lfcm[, 46]
 prob.afcm <- surv.afcm[, 46]
-prob.logistic <- 1 - predict(fit1.logistic, newdata = df_post1_r, type = "response")
+prob.logistic <- 1 - predict(fit1.logistic, newdata = df_post2_r, type = "response")
 
 # Function to compute Youden's J optimal cutoff
 get_best_cutoff <- function(true, prob) {

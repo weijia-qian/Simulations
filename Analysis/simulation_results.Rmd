@@ -16,12 +16,33 @@ library(gt)
 library(kableExtra)
 library(MASS)
 library(mgcv)
+library(patchwork)
 library(refund)
 library(scam)
 library(splines)
 library(tidyverse)
 
-folder_path <- "/Users/weijia/Research/FDA/Simulations/Output/20250630"
+
+theme_set(theme_minimal() + theme(legend.position = "bottom"))
+# theme(axis.text = element_text(size = 15),
+#         axis.title = element_text(size = 15),
+#         axis.text.x = element_blank(),
+#         axis.ticks.x = element_blank(),
+#         legend.position = "bottom",
+#         legend.box.margin = margin(t = -20, b = 0),
+#         legend.title = element_text(size = 15),
+#         legend.text = element_text(size = 15))
+
+# Define a custom color palette for the methods
+my_colors <- c(
+  "FTTM" = "#440154",
+  # "mgcv LFCM" = "#414487",
+  "LFCM" = "#2A788E",
+  "loglogistic lfAFT" = "#7AD151",
+  "lognormal lfAFT" = "#FDE725"
+)
+
+folder_path <- "/Users/weijia/Research/FDA/Simulations/Output/20250720"
 rda_files <- list.files(path = folder_path, pattern = "\\.RDA$", full.names = TRUE)
 all_results <- list()
 for (i in 1:length(rda_files)) {
@@ -67,92 +88,55 @@ create_table <- function(data, var, beta_type, title, subtitle){
 ```
 
 
-### Average Out-of-Sample C-index Across Iterations
-
+### Average Computation time
 ```{r}
 all_info <- data.frame()
 # Loop through all scenarios and iterations to extract 'info'
 for (scenario in all_results) {
-  print(scenario[[1]]$info$scenario)
+  # print(scenario[[1]]$info$scenario)
   for (iteration in scenario) {
     all_info <- rbind(all_info, iteration$info)
   }
 }
 
-# Calculate the average C-index Across iterations
-table_cindex <- all_info %>%
-  group_by(b, beta_type, family, n, nS) %>%
+# Calculate the average computation time across iterations
+table_time <- all_info %>%
+  filter(nS == 100 & family == "lognormal") %>%
+  group_by(beta_type, family, n, nS) %>%
   summarise(
-    AUC_norm = round(mean(AUC_norm, na.rm = TRUE), 3),
-    AUC_cox = round(mean(AUC_cox, na.rm = TRUE), 3),
-    AUC_faft = round(mean(AUC_faft, na.rm = TRUE), 3),
-    AUC_faft2 = round(mean(AUC_faft2, na.rm = TRUE), 3),
+    time_norm = round(mean(time_norm, na.rm = TRUE), 3),
+    time_cox = round(mean(time_cox, na.rm = TRUE), 3),
+    time_faft = round(mean(time_faft, na.rm = TRUE), 3),
+    time_faft2 = round(mean(time_faft2, na.rm = TRUE), 3),
     .groups = "drop"
   )
-
-# Create summary table
-table_cindex_1 <- create_table(table_cindex, var = c("AUC_norm", "AUC_cox", "AUC_faft", "AUC_faft2"), beta_type = "simple",
-                               title = "Average Out-of-Sample C-Index Across 500 Simulations",
-                               subtitle = "Beta type: simple")
-table_cindex_1
-table_cindex_2 <- create_table(table_cindex, var = c("AUC_norm", "AUC_cox"), beta_type = "complex",
-                               title = "Average Out-of-Sample C-Index Across 500 Simulations",
-                               subtitle = "Beta type: complex")
-table_cindex_2
-
 ```
 
+
 ### Average Out-of-Sample Brier Score Across Iterations
-
 ```{r}
-# Calculate the average Brier Score Across iterations
+# box plot
 table_Brier <- all_info %>%
-  group_by(beta_type, family, n, nS) %>%
-  filter(!is.infinite(Brier_norm) & !is.infinite(Brier_cox)) %>%
-  summarise(
-    Brier_norm = round(mean(Brier_norm, na.rm = TRUE), 3),
-    Brier_cox = round(mean(Brier_cox, na.rm = TRUE), 3),
-    Brier_faft = round(mean(Brier_faft, na.rm = TRUE), 3),
-    Brier_faft2 = round(mean(Brier_faft, na.rm = TRUE), 3),
-    .groups = "drop"
-  )
-
-# Create summary table
-table_Brier_1 <- create_table(table_Brier, var = c("Brier_norm", "Brier_cox"), beta_type = "simple",
-                               title = "Average Out-of-Sample Brier Score Across 500 Simulations",
-                               subtitle = "Beta type: simple")
-table_Brier_1
-table_Brier_2 <- create_table(table_Brier, var = c("Brier_norm", "Brier_cox"), beta_type = "complex",
-                               title = "Average Out-of-Sample Brier Score Across 500 Simulations",
-                               subtitle = "Beta type: complex")
-table_Brier_2
-
-# boxplot
-plot_Brier <- table_Brier %>%
-  pivot_longer(cols = c("Brier_norm", "Brier_cox", "Brier_faft", "Brier_faft2"),
+  pivot_longer(cols = c("Brier_norm", "Brier_cox", "Brier_faft2"),
                names_to = "type",
                values_to = "value") %>%
   mutate(est_model = case_when(str_detect(type, "cox") ~ "LFCM",
-                               str_detect(type, "norm") ~ "mgcv lfAFT",
+                               str_detect(type, "fttm") ~ "FTTM",
+                               str_detect(type, "norm") ~ "lognormal lfAFT",
                                str_detect(type, "faft2") ~ "loglogistic lfAFT",
-                               .default = "lognormal lfAFT"))
+                               .default = "lognormal lfAFT"),
+         est_model = factor(est_model, 
+                            levels = c("loglogistic lfAFT", "lognormal lfAFT", "LFCM", "FTTM")),
+         log_value = log(value))
 
-plot_Brier %>%
+table_Brier %>%
   filter(beta_type == "simple") %>%
-  ggplot(aes(factor(nS), value, fill = est_model)) + 
-  geom_bar(stat = "identity", position = position_dodge()) +
-  facet_grid(family~n, labeller = label_both) +
-  labs(x = "nS", y = "Brier Score", title = "Average Brier Score Across 500 Simulations",
-       subtitle = "beta type: simple")
-
-plot_Brier %>%
-  filter(beta_type == "simple" & nS == 100) %>%
-  ggplot(aes(factor(n), value, fill = est_model)) + 
-  geom_bar(stat = "identity", position = position_dodge()) +
-  facet_grid(~family) +
-  labs(x = "n", y = "Brier Score", title = "Average Brier Score Across 50 Simulations",
-       fill = NULL) +
-  theme(legend.position = "bottom")
+  ggplot(aes(factor(nS), log_value, fill = est_model)) + 
+  geom_boxplot(outliers = FALSE, outlier.size = 0.1) +
+  scale_fill_manual(values = my_colors) +
+  facet_grid(family~n, labeller = label_both, scales = "free") +
+  labs(x = "density of grid", y = "log out-of-sample Brier score", fill = "model"
+       )
 ```
 
 ### Plot Estimated Coefficient + CI + True Coefficient
@@ -189,6 +173,9 @@ for (scenario in all_results) {
                            est_coef_faft = iteration$coef$est_coef_faft,
                            lb_coef_faft = iteration$coef$lb_coef_faft,
                            ub_coef_faft = iteration$coef$ub_coef_faft,
+                           est_coef_faft2 = iteration$coef$est_coef_faft2,
+                           lb_coef_faft2 = iteration$coef$lb_coef_faft2,
+                           ub_coef_faft2 = iteration$coef$ub_coef_faft2,
                            cma_lb_coef_norm = iteration$coef$cma_lb_coef_norm,
                            cma_ub_coef_norm = iteration$coef$cma_ub_coef_norm,
                            est_coef_cox = iteration$coef$est_coef_cox,
@@ -213,7 +200,7 @@ if (!dir.exists(output_dir)) {
 
 # select a subset of scenarios
 sub_coef_2 <- sub_coef %>%
-  filter(family != "cox.ph")
+  filter(family == "loglogistic" & beta_type == "simple" & nS == 500)
 
 # Loop through each unique scenario
 scenarios <- unique(sub_coef_2[, c("family", "n", "nS", "beta_type", "b", "censor_rate")])
@@ -233,14 +220,18 @@ for (i in 1:nrow(scenarios)) {
 
 # Create the plot
 p <- ggplot(data = scenario_data, aes(x = time)) +
-  geom_ribbon(aes(ymin = lb_coef_faft, ymax = ub_coef_faft, fill = "Pointwise CI"), alpha = 0.5) +
-  #geom_ribbon(aes(ymin = cma_lb_coef_norm, ymax = cma_ub_coef_norm, fill = "CMA CI"), alpha = 0.3) +
-  geom_line(aes(y = est_coef_faft, color = "Estimated Coefficient"), size = 1) +
+  # geom_ribbon(aes(ymin = lb_coef_faft, ymax = ub_coef_faft, fill = "Pointwise CI"), alpha = 0.5) +
+  # geom_line(aes(y = est_coef_faft, color = "Estimated Coefficient"), size = 1) +
+  geom_ribbon(aes(ymin = lb_coef_faft2, ymax = ub_coef_faft2, fill = "Pointwise CI"), alpha = 0.5) +
+  geom_line(aes(y = est_coef_faft2, color = "Estimated Coefficient"), size = 1) +
+  # geom_ribbon(aes(ymin = lb_coef_norm, ymax = ub_coef_norm, fill = "Pointwise CI"), alpha = 0.5) +
+  # geom_line(aes(y = est_coef_norm, color = "Estimated Coefficient"), size = 1) +
+  # geom_ribbon(aes(ymin = lb_coef_cox, ymax = ub_coef_cox, fill = "Pointwise CI"), alpha = 0.5) +
+  # geom_line(aes(y = est_coef_cox, color = "Estimated Coefficient"), size = 1) +
   geom_line(aes(y = true_coef, color = "True Coefficient"), linetype = "dashed", size = 1) +
   scale_color_manual(values = c("Estimated Coefficient" = "blue", "True Coefficient" = "red")) +
   scale_fill_manual(values = c(
     "Pointwise CI" = "lightblue"
-    #"CMA CI" = "lightgreen"
   )) +
   labs(
     x = "Time",
@@ -367,10 +358,10 @@ for (scenario in all_results) {
                            mise_coef_cox = mean(iteration$coef$se_coef_cox),
                            mise_coef_faft = mean(iteration$coef$se_coef_faft),
                            mise_coef_faft2 = mean(iteration$coef$se_coef_faft2),
-                           #mise_coef_sieve = mean(iteration$coef$se_coef_sieve),
                            cp_coef_norm = mean(iteration$coef$cover_coef_norm),
                            cp_coef_cox = mean(iteration$coef$cover_coef_cox),
-                           #cp_coef_faft = mean(iteration$coef$cover_coef_faft),
+                           cp_coef_faft = mean(iteration$coef$cover_coef_faft),
+                           cp_coef_faft2 = mean(iteration$coef$cover_coef_faft2),
                            cp_cma_coef_norm = all(iteration$coef$cover_cma_coef_norm),
                            cp_cma_coef_cox = all(iteration$coef$cover_cma_coef_cox))
 
@@ -379,101 +370,33 @@ for (scenario in all_results) {
   }
 }
 
-# Calculate the average MISE of coefficient function Across iterations
+# box plot
 table_mise_coef <- all_coef %>%
-  group_by(b, beta_type, family, n, nS) %>%
-  summarise(
-    mise_coef_norm = round(mean(mise_coef_norm, na.rm = TRUE), 3),
-    mise_coef_cox = round(mean(mise_coef_cox, na.rm = TRUE), 3),
-    mise_coef_faft = round(mean(mise_coef_faft, na.rm = TRUE), 3),
-    mise_coef_faft2 = round(mean(mise_coef_faft, na.rm = TRUE), 3),
-    #mise_coef_sieve = round(mean(mise_coef_sieve, na.rm = TRUE), 3),
-    .groups = "drop"
-  ) 
-
-# Create summary table
-table_mise_coef_1 <- create_table(table_mise_coef, var = c("mise_coef_norm", "mise_coef_cox"), 
-                              beta_type = "simple",
-                              title = "Average MISE of Coefficient Function Across 500 Simulations",
-                              subtitle = "Beta type: simple")
-table_mise_coef_1
-table_mise_coef_2 <- create_table(table_mise_coef, var = c("mise_coef_norm", "mise_coef_cox"), 
-                              beta_type = "complex",
-                              title = "Average MISE of Coefficient Function Across 500 Simulations",
-                               subtitle = "Beta type: complex")
-table_mise_coef_2
-
-# plot
-plot_mise_coef <- table_mise_coef %>%
-  pivot_longer(cols = c("mise_coef_norm", "mise_coef_faft", "mise_coef_faft2"),
+  pivot_longer(cols = c("mise_coef_norm", "mise_coef_cox", "mise_coef_faft2"),
                names_to = "type",
                values_to = "value") %>%
   mutate(est_model = case_when(str_detect(type, "cox") ~ "LFCM",
-                               str_detect(type, "norm") ~ "mgcv lfAFT",
+                               str_detect(type, "norm") ~ "lognormal lfAFT",
                                str_detect(type, "faft2") ~ "loglogistic lfAFT",
-                               .default = "lognormal lfAFT"))
-plot_mise_coef %>%
-  filter(beta_type == "complex") %>%
-  ggplot(aes(factor(nS), value, fill = est_model)) + 
-  geom_bar(stat = "identity", position = position_dodge()) +
-  facet_grid(family~n, labeller = label_both) +
-  labs(x = "nS", y = "MISE", title = "Average MISE of Coefficient Function Across 500 Simulations")
+                               .default = "lognormal lfAFT"),
+         est_model = factor(est_model, 
+                            levels = c("loglogistic lfAFT", "lognormal lfAFT", "LFCM", "FTTM")),
+         log_value = log(value))
 
-plot_mise_coef %>%
-  filter(beta_type == "simple" & family != "cox.ph") %>%
-  ggplot(aes(factor(n), value)) + 
-  geom_bar(stat = "identity", position = position_dodge()) +
-  facet_grid(~family) +
-  labs(x = "n", y = "MISE", title = "Average MISE of Coefficient Function Across 50 Iterations")
-```
-
-### Average Coverage Probability of Pointwise CIs for Coefficient Function
-```{r}
-# Calculate the average CP of Pointwise CIs for Coefficient Function
-table_cp_coef <- all_coef %>%
-  group_by(b, beta_type, family, n, nS) %>%
-  summarise(
-    cp_coef_norm = round(mean(cp_coef_norm, na.rm = TRUE), 3),
-    cp_coef_cox = round(mean(cp_coef_cox, na.rm = TRUE), 3),
-    cp_coef_faft = round(mean(cp_coef_faft, na.rm = TRUE), 3),
-    .groups = "drop"
-  ) 
-
-# Create summary table
-table_cp_coef_1 <- create_table(table_cp_coef, var = c("cp_coef_norm", "cp_coef_cox"), 
-                              beta_type = "simple",
-                              title = "Average Coverage Probability of Pointwise CIs for Coefficient Function",
-                              subtitle = "Beta type: simple")
-table_cp_coef_1
-table_cp_coef_2 <- create_table(table_cp_coef, var = c("cp_coef_norm", "cp_coef_cox"), 
-                              beta_type = "complex",
-                              title = "Average Coverage Probability of Pointwise CIs for Coefficient Function",
-                               subtitle = "Beta type: complex")
-table_cp_coef_2
-```
-
-### Average Coverage Probability of CMA CIs for Coefficient Function
-```{r}
-# Calculate the average CP of CMA CIs for Coefficient Function
-table_cp_cma_coef <- all_coef %>%
-  group_by(beta_type, family, n, nS) %>%
-  summarise(
-    cp_cma_coef_norm = round(mean(cp_cma_coef_norm, na.rm = TRUE), 3),
-    cp_cma_coef_cox = round(mean(cp_cma_coef_cox, na.rm = TRUE), 3),
-    .groups = "drop"
-  ) 
-
-# Create summary table
-table_cp_cma_coef_1 <- create_table(table_cp_cma_coef, var = c("cp_cma_coef_norm", "cp_cma_coef_cox"), 
-                              beta_type = "simple",
-                              title = "Average Coverage Probability of CMA CIs for Coefficient Function",
-                              subtitle = "Beta type: simple")
-table_cp_cma_coef_1
-table_cp_cma_coef_2 <- create_table(table_cp_cma_coef, var = c("cp_cma_coef_norm", "cp_cma_coef_cox"), 
-                              beta_type = "complex",
-                              title = "Average Coverage Probability of CMA CIs for Coefficient Function",
-                               subtitle = "Beta type: complex")
-table_cp_cma_coef_2
+plot_mise_coef <- table_mise_coef %>%
+  filter(beta_type == "simple") %>%
+  ggplot(aes(factor(nS), log_value, fill = est_model)) + 
+  geom_boxplot(outliers = FALSE, outlier.size = 0.1) +
+  scale_fill_manual(values = my_colors) +
+  facet_grid(family~n, labeller = label_both, scales = "free") +
+  labs(x = "density of grid", y = expression("log MISE of"~beta(s)), fill = "model"
+       ) +
+  theme(
+    strip.text.y = element_blank(),  
+    strip.background.y = element_blank()
+    # theme(axis.title=element_text(size=10))
+  )
+  
 ```
 
 ### MISE for Estimated Survival Functions
@@ -502,53 +425,73 @@ for (scenario in all_results) {
 }
 
 table_mise_surv <- all_surv %>%
-  group_by(b, beta_type, family, n, nS) %>%
-  summarise(
-    mise_surv_norm = round(mean(mise_surv_norm, na.rm = TRUE), 3),
-    mise_surv_cox = round(mean(mise_surv_cox, na.rm = TRUE), 3),
-    mise_surv_faft = round(mean(mise_surv_faft, na.rm = TRUE), 3),
-    mise_surv_faft2 = round(mean(mise_surv_faft2, na.rm = TRUE), 3),
-    .groups = "drop"
-  )
-
-# Create summary table
-table_mise_surv_1 <- create_table(table_mise_surv, var = c("mise_surv_norm", "mise_surv_cox"), 
-                              beta_type = "simple",
-                              title = "Average MISE of Surivival Function Across 500 Simulations",
-                              subtitle = "Beta type: simple")
-table_mise_surv_1
-table_mise_surv_2 <- create_table(table_mise_surv, var = c("mise_surv_norm", "mise_surv_cox"), 
-                              beta_type = "complex",
-                              title = "Average MISE of Survival Function Across 500 Simulations",
-                              subtitle = "Beta type: complex")
-table_mise_surv_2
-
-# boxplot
-plot_surv <- table_mise_surv %>%
-  pivot_longer(cols = c("mise_surv_norm", "mise_surv_cox", "mise_surv_faft", "mise_surv_faft2"),
+  pivot_longer(cols = c("mise_surv_norm", "mise_surv_cox", "mise_surv_faft2"),
                names_to = "type",
                values_to = "value") %>%
   mutate(est_model = case_when(str_detect(type, "cox") ~ "LFCM",
+                               str_detect(type, "norm") ~ "lognormal lfAFT",
+                               str_detect(type, "faft2") ~ "loglogistic lfAFT",
+                               .default = "lognormal lfAFT"),
+         est_model = factor(est_model, 
+                            levels = c("loglogistic lfAFT", "lognormal lfAFT", "LFCM", "FTTM")),
+         log_value = log(value))
+
+plot_mise_surv <- table_mise_surv %>%
+  filter(beta_type == "simple") %>%
+  ggplot(aes(factor(nS), log_value, fill = est_model)) + 
+  geom_boxplot(outliers = FALSE, outlier.size = 0.1) +
+  scale_fill_manual(values = my_colors) +
+  facet_grid(family~n, labeller = label_both, scales = "free") +
+  labs(x = "density of grid", y = "log MISE of survival function", fill = "model"
+       )
+  theme(axis.title=element_text(size=10))
+
+plot_mise_coef + plot_mise_surv +
+  plot_layout(guides = 'collect', axes = 'collect')
+```
+
+### Average Coverage Probability of Pointwise CIs for Coefficient Function
+```{r}
+# Calculate the average CP of Pointwise CIs for Coefficient Function
+table_cp_coef <- all_coef %>%
+  group_by(b, beta_type, family, n, nS) %>%
+  summarise(
+    cp_coef_norm = round(mean(cp_coef_norm, na.rm = TRUE), 3),
+    cp_coef_cox = round(mean(cp_coef_cox, na.rm = TRUE), 3),
+    cp_coef_faft = round(mean(cp_coef_faft, na.rm = TRUE), 3),
+    cp_coef_faft2 = round(mean(cp_coef_faft2, na.rm = TRUE), 3),
+    .groups = "drop"
+  ) 
+
+# Create summary table
+table_cp_coef_1 <- create_table(table_cp_coef, var = c("cp_coef_norm", "cp_coef_cox", "cp_coef_faft", "cp_coef_faft2"), 
+                              beta_type = "simple",
+                              title = "Average Coverage Probability of Pointwise CIs for Coefficient Function",
+                              subtitle = "Beta type: simple")
+table_cp_coef_1
+table_cp_coef_2 <- create_table(table_cp_coef, var = c("cp_coef_norm", "cp_coef_cox", "cp_coef_faft", "cp_coef_faft2"), 
+                              beta_type = "complex",
+                              title = "Average Coverage Probability of Pointwise CIs for Coefficient Function",
+                               subtitle = "Beta type: complex")
+table_cp_coef_2
+
+# Plots
+plot_cp_coef <- table_cp_coef %>%
+  pivot_longer(cols = c("cp_coef_norm", "cp_coef_cox", "cp_coef_faft", "cp_coef_faft2"),
+               names_to = "type",
+               values_to = "value") %>%
+  mutate(est_model = case_when(str_detect(type, "cox") ~ "mgcv LFCM",
+                               str_detect(type, "fttm") ~ "FTTM",
                                str_detect(type, "norm") ~ "mgcv lfAFT",
                                str_detect(type, "faft2") ~ "loglogistic lfAFT",
                                .default = "lognormal lfAFT"))
-plot_surv %>%
+
+plot_cp_coef %>%
   filter(beta_type == "simple") %>%
   ggplot(aes(factor(nS), value, fill = est_model)) + 
   geom_bar(stat = "identity", position = position_dodge()) +
+  geom_hline(yintercept=0.95, linetype="dashed", color = "red") +
   facet_grid(family~n, labeller = label_both) +
-  labs(x = "nS", y = "MISE", title = "MISE of Estimated Survival Function")   
-
-plot_surv %>%
-  filter(beta_type == "simple" & nS == 100) %>%
-  ggplot(aes(factor(n), value, fill = est_model)) + 
-  geom_bar(stat = "identity", position = position_dodge()) +
-  #geom_boxplot() +
-  facet_grid(~family) +
-  labs(x = "n", y = "MISE", title = "Average MISE of Survival Function Across 50 Simulations",
-       fill = NULL) +
-  theme(legend.position = "bottom")
+  labs(x = "n", y = "Coverage Probability", title = "Average Pointwise Coverage Probability of Coefficient Function Across 100 Simulations", fill = "Model")
 ```
-
-
 
