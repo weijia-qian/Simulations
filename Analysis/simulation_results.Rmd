@@ -42,7 +42,8 @@ my_colors <- c(
   "lognormal lfAFT" = "#FDE725"
 )
 
-folder_path <- "/Users/weijia/Research/FDA/Simulations/Output/20250720"
+# folder_path <- "/Users/weijia/Research/FDA/Simulations/Output/20250720"
+folder_path <- "/Users/weijia/Research/FDA/Simulations/Output/20250819"
 rda_files <- list.files(path = folder_path, pattern = "\\.RDA$", full.names = TRUE)
 all_results <- list()
 for (i in 1:length(rda_files)) {
@@ -116,27 +117,29 @@ table_time <- all_info %>%
 ### Average Out-of-Sample Brier Score Across Iterations
 ```{r}
 # box plot
-table_Brier <- all_info %>%
+plot_Brier <- all_info %>%
   pivot_longer(cols = c("Brier_norm", "Brier_cox", "Brier_faft2"),
                names_to = "type",
                values_to = "value") %>%
-  mutate(est_model = case_when(str_detect(type, "cox") ~ "LFCM",
-                               str_detect(type, "fttm") ~ "FTTM",
-                               str_detect(type, "norm") ~ "lognormal lfAFT",
-                               str_detect(type, "faft2") ~ "loglogistic lfAFT",
-                               .default = "lognormal lfAFT"),
+  mutate(est_model = case_when(
+            str_detect(type, "cox") ~ "LFCM",
+            str_detect(type, "fttm") ~ "FTTM",
+            str_detect(type, "norm") ~ "lognormal lfAFT",
+            str_detect(type, "faft2") ~ "loglogistic lfAFT",
+            .default = "lognormal lfAFT"),
          est_model = factor(est_model, 
                             levels = c("loglogistic lfAFT", "lognormal lfAFT", "LFCM", "FTTM")),
          log_value = log(value))
 
-table_Brier %>%
+plot_Brier %>%
   filter(beta_type == "simple") %>%
-  ggplot(aes(factor(nS), log_value, fill = est_model)) + 
-  geom_boxplot(outliers = FALSE, outlier.size = 0.1) +
+  ggplot(aes(factor(nS), value, fill = est_model)) + 
+  geom_boxplot(outlier.shape = NA, outlier.size = 0.1) +
   scale_fill_manual(values = my_colors) +
   facet_grid(family~n, labeller = label_both, scales = "free") +
-  labs(x = "density of grid", y = "log out-of-sample Brier score", fill = "model"
+  labs(x = "density of grid", y = "out-of-sample Brier score", fill = "model"
        )
+
 ```
 
 ### Plot Estimated Coefficient + CI + True Coefficient
