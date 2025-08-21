@@ -35,9 +35,12 @@ load(here("Source", "dat_func.Rdata")) # load real data
 ###############################################################
 ## set simulation design elements
 ###############################################################
-family = c("lognormal", "loglogistic", "cox.ph")
-n = c(200)
-nS = c(50, 100, 500)
+# family = c("lognormal", "loglogistic", "cox.ph")
+# n = c(200)
+# nS = c(50, 100, 500)
+family = c("lognormal", "cox.ph")
+n = c(100, 200, 500)
+nS = c(100)
 beta_type = c('nonlinear1')
 b = c(0.5)
 seed_start = 1234
@@ -138,13 +141,19 @@ for (iter in 1:N_iter) {
   
   # set the time grid to evaluate survival function
   tmax <- 2000 # consistent with 'tmax' in simulate_Cox2()
-  tgrid <- seq(0, tmax, len = 1000) 
+  # tgrid <- seq(0, tmax, len = 1000) 
+  nS_pred <- 500
+  tgrid <- seq(0, tmax, len = nS_pred)
   
   # estimated survival function
   S_aaft_test <- cal_stime(fit = fit.aaft, data = sim_data_test$data, tgrid = tgrid, family = 'lognormal')
-  S_afcm_test <- cal_stime(fit = fit.afcm, data = sim_data_test$data, tgrid = tgrid, family = 'cox.ph')
+  df_pred <- sim_data_test$data[rep(1:n, each = nS_pred), ]
+  df_pred$Y <- rep(tgrid, n)
+  S_afcm_test <- matrix(predict(fit.afcm, newdata = df_pred, type = "response"), nrow = n, ncol = nS_pred, byrow = TRUE)
+  # S_afcm_test <- cal_stime(fit = fit.afcm, data = sim_data_test$data, tgrid = tgrid, family = 'cox.ph')
   S_laft_test <- cal_stime(fit = fit.laft, data = sim_data_test$data, tgrid = tgrid, family = 'lognormal')
-  S_lfcm_test <- cal_stime(fit = fit.lfcm, data = sim_data_test$data, tgrid = tgrid, family = 'cox.ph')
+  S_lfcm_test <- matrix(predict(fit.lfcm, newdata = df_pred, type = "response"), nrow = n, ncol = nS_pred, byrow = TRUE)
+  # S_lfcm_test <- cal_stime(fit = fit.lfcm, data = sim_data_test$data, tgrid = tgrid, family = 'cox.ph')
   
   ## calculate brier score
   Brier_aaft <- cal_Brier(S_aaft_test, Stime = time_test, status = event_test, tgrid = tgrid)
@@ -193,9 +202,13 @@ for (iter in 1:N_iter) {
   
   # estimated survival function
   S_aaft <- cal_stime(fit = fit.aaft, data = sim_data$data, tgrid = tgrid, family = 'lognormal')
-  S_afcm <- cal_stime(fit = fit.afcm, data = sim_data$data, tgrid = tgrid, family = 'cox.ph')
+  df_pred <- sim_data$data[rep(1:n, each = nS_pred), ]
+  df_pred$Y <- rep(tgrid, n)
+  S_afcm <- matrix(predict(fit.afcm, newdata = df_pred, type = "response"), nrow = n, ncol = nS_pred, byrow = TRUE)
+  # S_afcm <- cal_stime(fit = fit.afcm, data = sim_data$data, tgrid = tgrid, family = 'cox.ph')
   S_laft <- cal_stime(fit = fit.laft, data = sim_data$data, tgrid = tgrid, family = 'lognormal')
-  S_lfcm <- cal_stime(fit = fit.lfcm, data = sim_data$data, tgrid = tgrid, family = 'cox.ph')
+  S_lfcm <- matrix(predict(fit.lfcm, newdata = df_pred, type = "response"), nrow = n, ncol = nS_pred, byrow = TRUE)
+  # S_lfcm <- cal_stime(fit = fit.lfcm, data = sim_data$data, tgrid = tgrid, family = 'cox.ph')
 
   # calculate pointwise squared errors
   df_surv <- data.frame(time = tgrid,
