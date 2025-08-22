@@ -61,7 +61,7 @@ simulate_Cox2 = function(data = dat_func,
   H0_fit <- scam(log(H0_hat+1e-8) ~ s(t0, bs = "mpi") - 1) 
   #H0_fit <- scam(H0_hat ~ s(t0, bs = "mpi") - 1) 
   # set the time grid to evaluate cumulative baseline hazard 
-  tgrid <- seq(0, tmax, len = 1000) 
+  tgrid <- seq(0, tmax, len = 500) 
   # derive final estimates on the grid 
   H0_prd <- exp(predict(H0_fit, newdata = data.frame(t0 = tgrid)))
   #H0_prd <- pmax(0, predict(H0_fit, newdata = data.frame(t0 = tgrid)))
