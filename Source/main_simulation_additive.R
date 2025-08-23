@@ -39,7 +39,7 @@ load(here("Source", "dat_func.Rdata")) # load real data
 # n = c(200)
 # nS = c(50, 100, 500)
 family = c("cox.ph")
-n = c(100, 200, 500)
+n = c(100, 500)
 nS = c(100)
 beta_type = c('nonlinear1')
 b = c(0.5)

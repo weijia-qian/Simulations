@@ -43,7 +43,8 @@ my_colors <- c(
   "afAFT" = "#B481BB"
 )
 
-folder_path <- "/Users/weijia/Research/FDA/Simulations/Output/20250709_additive"
+# folder_path <- "/Users/weijia/Research/FDA/Simulations/Output/20250709_additive"
+folder_path <- "/Users/weijia/Research/FDA/Simulations/Output/20250821_additive"
 rda_files <- list.files(path = folder_path, pattern = "\\.RDA$", full.names = TRUE)
 all_results <- list()
 for (i in 1:length(rda_files)) {
@@ -147,10 +148,10 @@ plot_cindex <- table_cindex %>%
                                str_detect(type, "laft") ~ "lfAFT",
                                str_detect(type, "lfcm") ~ "LFCM"))
 plot_cindex %>%
-  ggplot(aes(factor(nS), value, fill = est_model)) + 
+  ggplot(aes(factor(n), value, fill = est_model)) + 
   geom_bar(stat = "identity", position = position_dodge()) +
   facet_grid(family~n, labeller = label_both) +
-  labs(x = "nS", y = "C-Index", title = "Average Out-of-Sample C-Index Across 100 Simulations")
+  labs(x = "sample size", y = "C-Index", title = "Average Out-of-Sample C-Index Across 100 Simulations")
 ```
 
 ### Average Out-of-Sample Brier Score Across Iterations
@@ -171,12 +172,21 @@ table_Brier <- all_info %>%
          log_value = log(value))
 
 plot_Brier <- table_Brier %>%
-  ggplot(aes(factor(nS), log_value, fill = est_model)) + 
+  ggplot(aes(factor(nS), value, fill = est_model)) + 
   geom_boxplot(outliers = FALSE, outlier.size = 0.1) +
   scale_fill_manual(values = my_colors) +
-  facet_grid(~family, scales = "free") +
-  labs(x = "density of grid", y = "log Brier score", fill = "model"
-       ) 
+  facet_grid(family~n, labeller = label_both, scales = "free") +
+  labs(x = "", y = "Brier score", fill = "model"
+       ) +
+  theme(
+    axis.title.x=element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    strip.text.y = element_blank(),  
+    strip.background.y = element_blank()
+    # strip.text = element_blank(), 
+    # strip.background = element_blank()
+  )
 ```
 
 
@@ -296,17 +306,19 @@ table_surv <- all_surv %>%
 plot_surv <- table_surv %>%
   ggplot(aes(factor(nS), log_value, fill = est_model)) + 
   geom_boxplot(outliers = FALSE, outlier.size = 0.1) +
-  # geom_bar(stat='summary', fun='mean', position = position_dodge()) +
   scale_fill_manual(values = my_colors) +
-  facet_grid(~family, scales = "free") +
-  labs(x = "density of grid", y = "log MISE of survival function", fill = "model"
+  facet_grid(family~n, labeller = label_both, scales = "free") +
+  labs(x = "", y = "log MISE of survival function", fill = "model"
        ) +
   theme(
-    strip.text = element_blank(), 
-    strip.background = element_blank()
+    axis.title.x=element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank()
+    # strip.text = element_blank(), 
+    # strip.background = element_blank()
   )
 
-plot_Brier / plot_surv +
+plot_Brier + plot_surv +
   plot_layout(guides = 'collect', axes = "collect")
 
 ```
