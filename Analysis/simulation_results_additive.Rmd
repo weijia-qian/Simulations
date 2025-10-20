@@ -73,45 +73,7 @@ ggplot(df_coef_long, aes(x = S, y = X, z = coef)) +
   theme_minimal()
 ```
 
-### Function to Create Summary Table
-```{r}
-# Transpose dataset from wide to long
-create_table <- function(data, var, beta_type, title, subtitle){
-  data1 <- data %>%
-  pivot_longer(cols = var,
-               names_to = "type",
-               values_to = "value") %>%
-  mutate(est_model = case_when(str_detect(type, "aaft") ~ "afAFT",
-                               str_detect(type, "afcm") ~ "AFCM",
-                               str_detect(type, "laft") ~ "lfAFT",
-                               str_detect(type, "lfcm") ~ "LFCM"))
-
-  # Combine 'n' and 'nS' into wider columns
-  data2 <- data1 %>%
-    # filter(beta_type == !!beta_type) %>%
-    pivot_wider(names_from = c(n, nS), values_from = value, names_sep = "_nS_")
-
-  gt_table <- data2 %>%
-    dplyr::select(-c(beta_type, type)) %>%
-    gt(groupname_col = "family") %>%
-    tab_spanner(label = "N = 100", columns = starts_with("100_")) %>%
-    tab_spanner(label = "N = 200", columns = starts_with("200_")) %>%
-    tab_spanner(label = "N = 500", columns = starts_with("500_")) %>%
-    cols_label(ends_with("nS_50") ~ "nS = 50",
-               ends_with("nS_100") ~ "nS = 100",
-               ends_with("nS_500") ~ "nS = 500") %>%
-   tab_header(title = title, subtitle = subtitle) %>%
-   cols_align(align = "center", columns = everything()) %>%
-   fmt_number(columns = where(is.numeric), decimals = 3) %>%
-   opt_table_outline() %>%
-   opt_row_striping()
-
-  return(gt_table)
-}
-```
-
-
-### Average Out-of-Sample C-index Across Iterations
+### Average Out-of-Sample Brier Score Across Iterations
 ```{r}
 all_info <- data.frame()
 # Loop through all scenarios and iterations to extract 'info'
@@ -121,43 +83,6 @@ for (scenario in all_results) {
   }
 }
 
-# Calculate the average C-index Across iterations
-table_cindex <- all_info %>%
-  group_by(b, beta_type, family, n, nS) %>%
-  summarise(
-    AUC_aaft = round(mean(AUC_aaft, na.rm = TRUE), 3),
-    AUC_afcm = round(mean(AUC_afcm, na.rm = TRUE), 3),
-    AUC_laft = round(mean(AUC_laft, na.rm = TRUE), 3),
-    AUC_lfcm = round(mean(AUC_laft, na.rm = TRUE), 3),
-    .groups = "drop"
-  )
-
-# Create summary table
-table_cindex_1 <- create_table(table_cindex, var = c("AUC_aaft", "AUC_afcm", "AUC_laft", "AUC_lfcm"), 
-                               title = "Average Out-of-Sample C-Index Across 100 Simulations",
-                               subtitle = "Beta type: linear")
-table_cindex_1
-
-# boxplot
-plot_cindex <- table_cindex %>%
-  pivot_longer(cols = c("AUC_aaft", "AUC_afcm", "AUC_laft", "AUC_lfcm"),
-               names_to = "type",
-               values_to = "value") %>%
-  mutate(est_model = case_when(str_detect(type, "aaft") ~ "afAFT",
-                               str_detect(type, "afcm") ~ "AFCM",
-                               str_detect(type, "laft") ~ "lfAFT",
-                               str_detect(type, "lfcm") ~ "LFCM"))
-plot_cindex %>%
-  ggplot(aes(factor(n), value, fill = est_model)) + 
-  geom_bar(stat = "identity", position = position_dodge()) +
-  facet_grid(family~n, labeller = label_both) +
-  labs(x = "sample size", y = "C-Index", title = "Average Out-of-Sample C-Index Across 100 Simulations")
-```
-
-### Average Out-of-Sample Brier Score Across Iterations
-
-```{r}
-# boxplot
 table_Brier <- all_info %>%
   filter(family != "loglogistic") %>%
   pivot_longer(cols = c("Brier_aaft", "Brier_afcm", "Brier_laft", "Brier_lfcm"),
@@ -169,14 +94,15 @@ table_Brier <- all_info %>%
                                str_detect(type, "lfcm") ~ "LFCM"),
          est_model = factor(est_model, 
                             levels = c("afAFT", "AFCM", "lfAFT", "LFCM")),
+         family = recode(family, "cox.ph" = "CoxPH"),
          log_value = log(value))
 
 plot_Brier <- table_Brier %>%
   ggplot(aes(factor(nS), value, fill = est_model)) + 
-  geom_boxplot(outliers = FALSE, outlier.size = 0.1) +
+  geom_boxplot(outliers = FALSE, fatten = 1.3) +
   scale_fill_manual(values = my_colors) +
-  facet_grid(family~n, labeller = label_both, scales = "free") +
-  labs(x = "", y = "Brier score", fill = "model"
+  facet_grid(family~n, labeller = labeller(n = label_both, family = label_value), scales = "free") +
+  labs(x = "", y = "out-of-sample Brier score", fill = "Model"
        ) +
   theme(
     axis.title.x=element_blank(),
@@ -188,79 +114,18 @@ plot_Brier <- table_Brier %>%
     # strip.background = element_blank()
   )
 ```
-
-
-### MISE for Estimated Coefficient Functions Across Iterations
+### Computation Time
 ```{r}
-all_coef <- data.frame() 
-
-# Loop through all scenarios and iterations to extract 'coef'
-for (scenario in all_results) {
-  for (iteration in scenario) {
-    
-    # Extract data for the current iteration
-    tmp_data <- data.frame(scenario = iteration$info$scenario,
-                           iter = iteration$info$iter,
-                           family = iteration$info$family,
-                           n = iteration$info$n,
-                           nS = iteration$info$nS,
-                           b = iteration$info$b,
-                           #time = time,
-                           beta_type = iteration$info$beta_type,
-                           mise_coef_aaft = mean(iteration$coef$se_coef_aaft, na.rm = TRUE),
-                           mise_coef_afcm = mean(iteration$coef$se_coef_afcm, na.rm = TRUE))
-
-    # Append to all_coef
-    all_coef <- rbind(all_coef, tmp_data)
-  }
-}
-
-# Calculate the average MISE of coefficient function Across iterations
-table_mise_coef <- all_coef %>%
-  group_by(b, beta_type, family, n, nS) %>%
+table_time <- all_info %>%
+  group_by(beta_type, family, n, nS) %>%
   summarise(
-    mise_coef_aaft = round(mean(mise_coef_aaft, na.rm = TRUE), 3),
-    mise_coef_afcm = round(mean(mise_coef_afcm, na.rm = TRUE), 3),
-    #mise_coef_sieve = round(mean(mise_coef_sieve, na.rm = TRUE), 3),
+    time_aaft = round(mean(time_aaft, na.rm = TRUE), 3),
+    time_afcm = round(mean(time_afcm, na.rm = TRUE), 3),
+    time_laft = round(mean(time_laft, na.rm = TRUE), 3),
+    time_lfcm = round(mean(time_lfcm, na.rm = TRUE), 3),
+    # time_fttm = round(mean(time_fttm, na.rm = TRUE), 3),
     .groups = "drop"
-  ) 
-
-# Create summary table
-# table_mise_coef_1 <- create_table(table_mise_coef, var = c("mise_coef_norm", "mise_coef_cox"), 
-#                               beta_type = "simple",
-#                               title = "Average MISE of Coefficient Function Across 500 Simulations",
-#                               subtitle = "Beta type: simple")
-# table_mise_coef_1
-# table_mise_coef_2 <- create_table(table_mise_coef, var = c("mise_coef_norm", "mise_coef_cox"), 
-#                               beta_type = "complex",
-#                               title = "Average MISE of Coefficient Function Across 500 Simulations",
-#                                subtitle = "Beta type: complex")
-# table_mise_coef_2
-
-# plot
-plot_mise_coef <- all_coef %>%
-  pivot_longer(cols = c("mise_coef_aaft"),
-               names_to = "type",
-               values_to = "value") %>%
-  mutate(est_model = case_when(str_detect(type, "aaft") ~ "lognormal aAFT",
-                               str_detect(type, "afcm") ~ "AFCM"))
-
-plot_mise_coef %>%
-  ggplot(aes(factor(nS), value, fill = est_model)) + 
-  geom_boxplot(outliers = FALSE, outlier.size = 0.1) +
-  #geom_bar(stat='summary', fun='mean', position = position_dodge()) +
-  facet_grid(family~n, labeller = label_both, scales = "free") +
-  labs(x = "nS", y = "MISE", fill = "Model"
-       )
-
-plot_mise_coef %>%
-  #filter(beta_type == "simple") %>%
-  ggplot(aes(factor(nS), value, fill = est_model)) + 
-  geom_bar(stat = "identity", position = position_dodge()) +
-  facet_grid(family~n, labeller = label_both) +
-  labs(x = "nS", y = "MISE", title = "Average MISE of Coefficient Surface Across 100 Simulations")
-
-
+  )
 ```
 
 
@@ -301,14 +166,15 @@ table_surv <- all_surv %>%
                                str_detect(type, "lfcm") ~ "LFCM"),
          est_model = factor(est_model, 
                             levels = c("afAFT", "AFCM", "lfAFT", "LFCM")),
+         family = recode(family, "cox.ph" = "CoxPH"),
          log_value = log(value))
 
 plot_surv <- table_surv %>%
   ggplot(aes(factor(nS), log_value, fill = est_model)) + 
-  geom_boxplot(outliers = FALSE, outlier.size = 0.1) +
+  geom_boxplot(outliers = FALSE, fatten = 1.3) +
   scale_fill_manual(values = my_colors) +
-  facet_grid(family~n, labeller = label_both, scales = "free") +
-  labs(x = "", y = "log MISE of survival function", fill = "model"
+  facet_grid(family~n, labeller = labeller(n = label_both, family = label_value), scales = "free") +
+  labs(x = "", y = "log MISE of survival function", fill = "Model"
        ) +
   theme(
     axis.title.x=element_blank(),
@@ -318,8 +184,11 @@ plot_surv <- table_surv %>%
     # strip.background = element_blank()
   )
 
-plot_Brier + plot_surv +
+plot_additive <- plot_Brier + plot_surv +
   plot_layout(guides = 'collect', axes = "collect")
+
+fig_dir <- "/Users/weijia/Research/FDA/Drafts"
+ggsave(file.path(fig_dir, "fig_sim_additive.jpeg"), plot_additive, width = 8, height = 4, dpi = 500)
 
 ```
 

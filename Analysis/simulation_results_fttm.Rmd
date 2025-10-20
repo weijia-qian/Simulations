@@ -40,52 +40,14 @@ my_colors <- c(
   "lognormal lfAFT" = "#FDE725"
 )
 
-folder_path <- "/Users/weijia/Research/FDA/Simulations/Output/20250716_fttm"
+folder_path <- "/Users/weijia/Research/FDA/Simulations/Output/20250822_fttm"
+# folder_path <- "/Users/weijia/Research/FDA/Simulations/Output/20250716_fttm"
 rda_files <- list.files(path = folder_path, pattern = "\\.RDA$", full.names = TRUE)
 all_results <- list()
 for (i in 1:length(rda_files)) {
   all_results[[i]] <- loadRDa(rda_files[[i]])
 }
 ```
-
-### Function to Create Summary Table
-```{r, include=FALSE}
-# Transpose dataset from wide to long
-create_table <- function(data, var, beta_type, title){
-  data1 <- data %>%
-  pivot_longer(cols = var,
-               names_to = "type",
-               values_to = "value") %>%
-  mutate(est_model = case_when(str_detect(type, "cox") ~ "mgcv LFCM",
-                               str_detect(type, "fttm") ~ "FTTM",
-                               str_detect(type, "norm") ~ "mgcv lfAFT",
-                               str_detect(type, "faft2") ~ "loglogistic lfAFT",
-                               .default = "lognormal lfAFT"))
-
-  # Combine 'n' and 'nS' into wider columns
-  data2 <- data1 %>%
-    #filter(beta_type == !!beta_type) %>%
-    pivot_wider(names_from = c(n, nS, beta_type), values_from = value, names_sep = "_nS_")
-
-  gt_table <- data2 %>%
-    dplyr::select(-c(type)) %>%
-    gt(groupname_col = "family") %>%
-    tab_spanner(label = "N = 100", columns = starts_with("100_")) %>%
-    tab_spanner(label = "N = 200", columns = starts_with("200_")) %>%
-    tab_spanner(label = "N = 500", columns = starts_with("500_")) %>%
-    cols_label(ends_with("nS_50") ~ "nS = 50",
-               ends_with("nS_100") ~ "nS = 100",
-               ends_with("nS_500") ~ "nS = 500") %>%
-   tab_header(title = title) %>%
-   cols_align(align = "center", columns = everything()) %>%
-   fmt_number(columns = where(is.numeric), decimals = 3) %>%
-   opt_table_outline() %>%
-   opt_row_striping()
-
-  return(gt_table)
-}
-```
-
 
 
 ### Computation Time
@@ -136,7 +98,7 @@ table_time <- all_info %>%
 ### Average Out-of-Sample Brier Score Across Iterations
 ```{r}
 # box plot
-plot_Brier <- all_info %>%
+table_Brier <- all_info %>%
   pivot_longer(cols = c("Brier_norm", "Brier_cox", "Brier_faft2", "Brier_fttm"),
                names_to = "type",
                values_to = "value") %>%
@@ -148,17 +110,156 @@ plot_Brier <- all_info %>%
             .default = "lognormal lfAFT"),
          est_model = factor(est_model, 
                             levels = c("loglogistic lfAFT", "lognormal lfAFT", "LFCM", "FTTM")),
+         family = recode(family, "cox.ph" = "CoxPH"),
          log_value = log(value))
 
-plot_Brier %>%
-  filter(beta_type == "simple") %>%
-  ggplot(aes(est_model, log_value, fill = est_model)) + 
-  geom_boxplot(outlier.shape = NA, outlier.size = 0.1) +
+plot_Brier <- table_Brier %>%
+  filter(beta_type == "simple" & n == 100) %>%
+  ggplot(aes(factor(nS), log_value, fill = est_model)) + 
+  geom_boxplot(outliers = FALSE, fatten = 1.3) +
   scale_fill_manual(values = my_colors) +
-  facet_grid(~family) +
-  labs(y = "log out-of-sample Brier score", fill = "model") +
-  theme(axis.title.x = element_blank(), axis.text.x = element_blank(), legend.position = "bottom")
+  facet_grid(~family, labeller = label_value, scales = "free") +
+  labs(y = "log Brier score", fill = "Model") +
+  theme(axis.title.x = element_blank(), axis.text.x = element_blank(),
+        axis.text = element_text(size = 10),
+        legend.title = element_text(size = 12),
+        legend.text = element_text(size = 12),
+        strip.text.x = element_blank(),  
+        strip.background.x = element_blank()
+        )
 
+```
+
+### MISE for Estimated Coefficient Functions Across Iterations
+```{r}
+all_coef <- data.frame() 
+
+# Loop through all scenarios and iterations to extract 'coef'
+for (scenario in all_results) {
+  for (iteration in scenario) {
+    
+    # Extract data for the current iteration
+    tmp_data <- data.frame(scenario = iteration$info$scenario,
+                           iter = iteration$info$iter,
+                           family = iteration$info$family,
+                           n = iteration$info$n,
+                           nS = iteration$info$nS,
+                           b = iteration$info$b,
+                           #time = time,
+                           beta_type = iteration$info$beta_type,
+                           mise_coef_norm = mean(iteration$coef$se_coef_norm),
+                           mise_coef_cox = mean(iteration$coef$se_coef_cox),
+                           mise_coef_faft = mean(iteration$coef$se_coef_faft),
+                           mise_coef_faft2 = mean(iteration$coef$se_coef_faft2),
+                           mise_coef_fttm = mean(iteration$coef$se_coef_fttm),
+                           cp_coef_norm = mean(iteration$coef$cover_coef_norm),
+                           cp_coef_cox = mean(iteration$coef$cover_coef_cox),
+                           cp_coef_faft = mean(iteration$coef$cover_coef_faft),
+                           cp_coef_faft2 = mean(iteration$coef$cover_coef_faft2),
+                           cp_coef_fttm = mean(iteration$coef$cover_coef_fttm),
+                           cp_cma_coef_norm = all(iteration$coef$cover_cma_coef_norm),
+                           cp_cma_coef_cox = all(iteration$coef$cover_cma_coef_cox))
+
+    # Append to all_coef
+    all_coef <- rbind(all_coef, tmp_data)
+  }
+}
+
+
+# boxplot
+table_mise_coef <- all_coef %>%
+  pivot_longer(cols = c("mise_coef_norm", "mise_coef_cox", "mise_coef_faft2", "mise_coef_fttm"),
+               names_to = "type",
+               values_to = "value") %>%
+  mutate(est_model = case_when(str_detect(type, "cox") ~ "LFCM",
+                               str_detect(type, "fttm") ~ "FTTM",
+                               str_detect(type, "norm") ~ "lognormal lfAFT",
+                               str_detect(type, "faft2") ~ "loglogistic lfAFT",
+                               .default = "lognormal lfAFT"),
+         est_model = factor(est_model, 
+                            levels = c("loglogistic lfAFT", "lognormal lfAFT", "LFCM", "FTTM")),
+         family = recode(family, "cox.ph" = "CoxPH"),
+         log_value = log(value))
+
+plot_mise_coef <- table_mise_coef %>%
+  filter(beta_type == "simple" & n == 100) %>%
+  ggplot(aes(factor(nS), log_value, fill = est_model)) + 
+  geom_boxplot(outliers = FALSE, fatten = 1.3) +
+  # geom_bar(stat='summary', fun='mean', position = position_dodge()) +
+  scale_fill_manual(values = my_colors) +
+  facet_grid(~family, labeller = label_value, scales = "free") +
+  labs(y = expression("log MISE of"~beta(s)), fill = "Model") + 
+  theme(axis.title.x = element_blank(), axis.text.x = element_blank(),
+        axis.text = element_text(size = 10),
+        legend.title = element_text(size = 12),
+        legend.text = element_text(size = 12),
+        strip.text.x = element_text(size = 12),
+        strip.text.y = element_blank(),
+        strip.background.y = element_blank())
+```
+
+### MISE for Estimated Survival Functions
+```{r}
+all_surv <- data.frame() 
+
+# Loop through all scenarios and iterations to extract 'coef'
+for (scenario in all_results) {
+  for (iteration in scenario) {
+    # Extract data for the current iteration
+    tmp_data <- data.frame(scenario = iteration$info$scenario,
+                           iter = iteration$info$iter,
+                           family = iteration$info$family,
+                           n = iteration$info$n,
+                           nS = iteration$info$nS,
+                           beta_type = iteration$info$beta_type,
+                           b = iteration$info$b,
+                           mise_surv_norm = mean(iteration$surv$se_surv_norm),
+                           mise_surv_cox = mean(iteration$surv$se_surv_cox),
+                           mise_surv_faft = mean(iteration$surv$se_surv_faft),
+                           mise_surv_faft2 = mean(iteration$surv$se_surv_faft2),
+                           mise_surv_fttm = mean(iteration$surv$se_surv_fttm))
+
+    # Append to all_coef
+    all_surv <- rbind(all_surv, tmp_data)
+  }
+}
+
+# boxplot
+table_mise_surv <- all_surv %>%
+  pivot_longer(cols = c("mise_surv_norm", "mise_surv_cox", "mise_surv_faft2", "mise_surv_fttm"),
+               names_to = "type",
+               values_to = "value") %>%
+  mutate(est_model = case_when(str_detect(type, "cox") ~ "LFCM",
+                               str_detect(type, "fttm") ~ "FTTM",
+                               str_detect(type, "norm") ~ "lognormal lfAFT",
+                               str_detect(type, "faft2") ~ "loglogistic lfAFT",
+                               .default = "lognormal lfAFT"),
+         est_model = factor(est_model, 
+                            levels = c("loglogistic lfAFT", "lognormal lfAFT", "LFCM", "FTTM")),
+         family = recode(family, "cox.ph" = "CoxPH"),
+         log_value = log(value))
+
+plot_mise_surv <- table_mise_surv %>%
+  filter(beta_type == "simple" & n == 100) %>%
+  ggplot(aes(factor(nS), log_value, fill = est_model)) + 
+  geom_boxplot(outliers = FALSE, fatten = 1.3) +
+  # geom_bar(stat='summary', fun='mean', position = position_dodge()) +
+  scale_fill_manual(values = my_colors) +
+  facet_grid(col = vars(family), labeller = label_value, scales = "free") +
+  labs(y = "log MISE of survival function", fill = "Model") + 
+  theme(axis.title.x = element_blank(), axis.text.x = element_blank(),
+        axis.text = element_text(size = 10),
+        legend.title = element_text(size = 12),
+        legend.text = element_text(size = 12),
+        strip.text.x = element_blank(),
+        strip.background.x = element_blank()
+        )
+
+plot_fttm <- plot_mise_coef / plot_mise_surv / plot_Brier +
+  plot_layout(guides = 'collect', axis = 'collect')
+
+fig_dir <- "/Users/weijia/Research/FDA/Drafts"
+ggsave(file.path(fig_dir, "fig_fttm.jpeg"), plot_fttm, width = 8, height = 6, dpi = 500)
 ```
 
 ### Plot Estimated Coefficient + CI + True Coefficient
@@ -276,69 +377,6 @@ print(p)
 # ggsave(file_name, plot = p, width = 8, height = 6)
 ```
 
-
-
-### MISE for Estimated Coefficient Functions Across Iterations
-```{r}
-all_coef <- data.frame() 
-
-# Loop through all scenarios and iterations to extract 'coef'
-for (scenario in all_results) {
-  for (iteration in scenario) {
-    
-    # Extract data for the current iteration
-    tmp_data <- data.frame(scenario = iteration$info$scenario,
-                           iter = iteration$info$iter,
-                           family = iteration$info$family,
-                           n = iteration$info$n,
-                           nS = iteration$info$nS,
-                           b = iteration$info$b,
-                           #time = time,
-                           beta_type = iteration$info$beta_type,
-                           mise_coef_norm = mean(iteration$coef$se_coef_norm),
-                           mise_coef_cox = mean(iteration$coef$se_coef_cox),
-                           mise_coef_faft = mean(iteration$coef$se_coef_faft),
-                           mise_coef_faft2 = mean(iteration$coef$se_coef_faft2),
-                           mise_coef_fttm = mean(iteration$coef$se_coef_fttm),
-                           cp_coef_norm = mean(iteration$coef$cover_coef_norm),
-                           cp_coef_cox = mean(iteration$coef$cover_coef_cox),
-                           cp_coef_faft = mean(iteration$coef$cover_coef_faft),
-                           cp_coef_faft2 = mean(iteration$coef$cover_coef_faft2),
-                           cp_coef_fttm = mean(iteration$coef$cover_coef_fttm),
-                           cp_cma_coef_norm = all(iteration$coef$cover_cma_coef_norm),
-                           cp_cma_coef_cox = all(iteration$coef$cover_cma_coef_cox))
-
-    # Append to all_coef
-    all_coef <- rbind(all_coef, tmp_data)
-  }
-}
-
-
-# boxplot
-table_mise_coef <- all_coef %>%
-  pivot_longer(cols = c("mise_coef_norm", "mise_coef_cox", "mise_coef_faft2", "mise_coef_fttm"),
-               names_to = "type",
-               values_to = "value") %>%
-  mutate(est_model = case_when(str_detect(type, "cox") ~ "LFCM",
-                               str_detect(type, "fttm") ~ "FTTM",
-                               str_detect(type, "norm") ~ "lognormal lfAFT",
-                               str_detect(type, "faft2") ~ "loglogistic lfAFT",
-                               .default = "lognormal lfAFT"),
-         est_model = factor(est_model, 
-                            levels = c("loglogistic lfAFT", "lognormal lfAFT", "LFCM", "FTTM")),
-         log_value = log(value))
-
-plot_mise_coef <- table_mise_coef %>%
-  filter(beta_type == "simple") %>%
-  ggplot(aes(est_model, log_value, fill = est_model)) + 
-  geom_boxplot(outliers = FALSE, outlier.size = 0.1) +
-  # geom_bar(stat='summary', fun='mean', position = position_dodge()) +
-  scale_fill_manual(values = my_colors) +
-  facet_grid(~family) +
-  labs(y = expression("log MISE of"~beta(s)), fill = "model") + 
-  theme(axis.title.x = element_blank(), axis.text.x = element_blank(), legend.position = "bottom")
-```
-
 ### Average Coverage Probability of Pointwise CIs for Coefficient Function
 ```{r}
 # Calculate the average CP of Pointwise CIs for Coefficient Function
@@ -373,61 +411,3 @@ plot_cp_coef %>%
   facet_grid(family~beta_type, labeller = label_both) +
   labs(x = "n", y = "Coverage Probability", title = "Average Pointwise Coverage Probability of Coefficient Function Across 100 Simulations", fill = "Model")
 ```
-
-### MISE for Estimated Survival Functions
-```{r}
-all_surv <- data.frame() 
-
-# Loop through all scenarios and iterations to extract 'coef'
-for (scenario in all_results) {
-  for (iteration in scenario) {
-    # Extract data for the current iteration
-    tmp_data <- data.frame(scenario = iteration$info$scenario,
-                           iter = iteration$info$iter,
-                           family = iteration$info$family,
-                           n = iteration$info$n,
-                           nS = iteration$info$nS,
-                           beta_type = iteration$info$beta_type,
-                           b = iteration$info$b,
-                           mise_surv_norm = mean(iteration$surv$se_surv_norm),
-                           mise_surv_cox = mean(iteration$surv$se_surv_cox),
-                           mise_surv_faft = mean(iteration$surv$se_surv_faft),
-                           mise_surv_faft2 = mean(iteration$surv$se_surv_faft2),
-                           mise_surv_fttm = mean(iteration$surv$se_surv_fttm))
-
-    # Append to all_coef
-    all_surv <- rbind(all_surv, tmp_data)
-  }
-}
-
-# boxplot
-table_mise_surv <- all_surv %>%
-  pivot_longer(cols = c("mise_surv_norm", "mise_surv_cox", "mise_surv_faft2", "mise_surv_fttm"),
-               names_to = "type",
-               values_to = "value") %>%
-  mutate(est_model = case_when(str_detect(type, "cox") ~ "LFCM",
-                               str_detect(type, "fttm") ~ "FTTM",
-                               str_detect(type, "norm") ~ "lognormal lfAFT",
-                               str_detect(type, "faft2") ~ "loglogistic lfAFT",
-                               .default = "lognormal lfAFT"),
-         est_model = factor(est_model, 
-                            levels = c("loglogistic lfAFT", "lognormal lfAFT", "LFCM", "FTTM")),
-         log_value = log(value))
-
-plot_mise_surv <- table_mise_surv %>%
-  filter(beta_type == "simple") %>%
-  ggplot(aes(est_model, log_value, fill = est_model)) + 
-  geom_boxplot(outliers = FALSE, outlier.size = 0.1) +
-  # geom_bar(stat='summary', fun='mean', position = position_dodge()) +
-  scale_fill_manual(values = my_colors) +
-  facet_grid(~family) +
-  labs(y = "log MISE of survival function", fill = "model") + 
-  theme(strip.text = element_blank(),
-        axis.title.x = element_blank(), axis.text.x = element_blank(), legend.position = "bottom")
-
-plot_mise_coef / plot_mise_surv +
-  plot_layout(guides = 'collect')
-```
-
-
-

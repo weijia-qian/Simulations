@@ -33,7 +33,7 @@ my_colors <- c(
   "loglogistic lfAFT" = "#7AD151",
   "lognormal lfAFT" = "#FDE725",
   "AFCM" = "#E03C8A",
-  "afAFT" = "#B481BB",
+  "lognormal afAFT" = "#B481BB",
   "functional logistic" = "#2EA9DF"
 )
 
@@ -79,7 +79,7 @@ df_post2_r <- df_wide[df_wide$mtm == "2_Post2" & df_wide$eye == "Right", ]
 # summary(df_post2_r$time_since_use)
 
 # time grid
-sgrid <- unique(df$time) # remove the last frame
+sgrid <- unique(df$time)
 #plot(df_post2_r$pct_chg_120, xlab= "Subject")
 ```
 
@@ -199,7 +199,7 @@ fit_mgcv <- function(data, family, sgrid, bs = "ps", k = 20){
                       bmi = data$bmi)
   
   # fit functional AFT model using mgcv
-  tgrid <- seq(0, 120, len = 1000) 
+  tgrid <- seq(0, 120, len = 500) 
   #df_surv = data2
   L1 <- kronecker(matrix(1, 1, 1), t(lvec))
   S1 <- kronecker(matrix(1, 1, 1), t(sgrid))
@@ -253,29 +253,29 @@ fit_mgcv <- function(data, family, sgrid, bs = "ps", k = 20){
 
 ```{r, linear models}
 # linear functional log-normal AFT model
-fit1.laft <- fit_mgcv(data = df_post2_r, family = "LAFT", sgrid = sgrid)
+fit2.laft <- fit_mgcv(data = df_post2_r, family = "LAFT", sgrid = sgrid)
 
 # linear functional Cox model
-fit1.lfcm <- fit_mgcv(data = df_post2_r, family = "LFCM", sgrid = sgrid)
+fit2.lfcm <- fit_mgcv(data = df_post2_r, family = "LFCM", sgrid = sgrid)
 
 # lognormal lfAFT
-fit1.faft <- fit_mgcv(data = df_post2_r, family = "lognormal", sgrid = sgrid) 
+fit2.faft <- fit_mgcv(data = df_post2_r, family = "lognormal", sgrid = sgrid) 
 
 # loglogistic lfAFT
-fit1.faft2 <- fit_mgcv(data = df_post2_r, family = "loglogistic", sgrid = sgrid)
+fit2.faft2 <- fit_mgcv(data = df_post2_r, family = "loglogistic", sgrid = sgrid)
 ```
 
 
 ```{r, esimtated coefficient function}
 # estimated coefficient function
 df_pred <- data.frame(S = sgrid, X_L = 1, age_in_years = age_mean_user, bmi = bmi_mean_user)
-coef.est.laft <- predict(fit1.laft[[1]], newdata = df_pred, type = "terms", term = "s(S):X_L", se.fit = TRUE)
-coef.est.lfcm <- predict(fit1.lfcm[[1]], newdata = df_pred, type = "terms", term = "s(S):X_L", se.fit = TRUE)
+coef.est.laft <- predict(fit2.laft[[1]], newdata = df_pred, type = "terms", term = "s(S):X_L", se.fit = TRUE)
+coef.est.lfcm <- predict(fit2.lfcm[[1]], newdata = df_pred, type = "terms", term = "s(S):X_L", se.fit = TRUE)
 
 plot_coef <- data.frame(time = sgrid,
-                        coef_faft2 = fit1.faft2[[1]]$beta1_hat,
-                        coef_faft2_lb = fit1.faft2[[1]]$beta1_ci_lower,
-                        coef_faft2_ub = fit1.faft2[[1]]$beta1_ci_upper,
+                        coef_faft2 = fit2.faft2[[1]]$beta1_hat,
+                        coef_faft2_lb = fit2.faft2[[1]]$beta1_ci_lower,
+                        coef_faft2_ub = fit2.faft2[[1]]$beta1_ci_upper,
                         coef_laft = as.numeric(coef.est.laft[[1]]),
                         coef_laft_lb = as.numeric(coef.est.laft[[1]] - qnorm(0.975) * coef.est.laft[[2]]),
                         coef_laft_ub = as.numeric(coef.est.laft[[1]] + qnorm(0.975) * coef.est.laft[[2]]),
@@ -287,10 +287,10 @@ plot_coef <- data.frame(time = sgrid,
 p_coef2 <- ggplot(data = plot_coef, aes(x = time)) +
     geom_line(aes(y = coef_faft2, color = "loglogistic lfAFT"), size = 1) +
     geom_line(aes(y = coef_laft, color = "lognormal lfAFT"), size = 1) +
-    geom_line(aes(y = coef_lfcm, color = "LFCM"), size = 1) +
+    # geom_line(aes(y = coef_lfcm, color = "LFCM"), size = 1) +
     geom_ribbon(aes(ymin = coef_faft2_lb, ymax = coef_faft2_ub, fill = "loglogistic lfAFT"), alpha = 0.3) +
     geom_ribbon(aes(ymin = coef_laft_lb, ymax = coef_laft_ub, fill = "lognormal lfAFT"), alpha = 0.3) +
-    geom_ribbon(aes(ymin = coef_lfcm_lb, ymax = coef_lfcm_ub, fill = "LFCM"), alpha = 0.3) +
+    # geom_ribbon(aes(ymin = coef_lfcm_lb, ymax = coef_lfcm_ub, fill = "LFCM"), alpha = 0.3) +
     scale_color_manual(values = my_colors,
                        breaks = c("loglogistic lfAFT", "lognormal lfAFT", "LFCM")) +
     scale_fill_manual(values = my_colors,
@@ -298,15 +298,16 @@ p_coef2 <- ggplot(data = plot_coef, aes(x = time)) +
     labs(
       x = "Seconds since light stimulus (s)",
       y = expression(beta~"(s)"),
-      title = "100 min assessment",
-      color = NULL,
-      fill = NULL
+      title = "Assessment 2",
+      color = "Model",
+      fill = "Model"
     ) +
     theme_minimal() +
     theme(legend.position="bottom")
 
-p_coef1 + p_coef2 +
+p_coef <- p_coef1 + p_coef2 +
   plot_layout(guides = 'collect', axes = "collect")
+ggsave(file.path(fig_dir, "fig_data_coef.jpeg"), p_coef, width = 8, height = 4, dpi = 500)
 ```
 
 
@@ -406,35 +407,44 @@ cdf_lfcm <- 1 - fit1.lfcm[[2]]
 cdf_afcm <- 1 - fit1.afcm[[2]]
 
 
-tgrid <- seq(0, 120, len = 1000) 
-i=1
-  plot_surv <- data.frame(time = tgrid,
+tgrid <- seq(0, 120, len = 500) 
+plot_surv <- data.frame(time = tgrid,
                           # cdf_faft = cdf_faft[i, ],
-                          cdf_faft2 = cdf_faft2[i, ],
-                          cdf_laft = cdf_laft[i, ],
-                          cdf_aaft = cdf_aaft[i, ],
-                          cdf_lfcm = cdf_lfcm[i, ],
-                          cdf_afcm = cdf_afcm[i, ]
+                          cdf_faft2 = cdf_faft2[1, ],
+                          cdf_laft = cdf_laft[1, ],
+                          cdf_aaft = cdf_aaft[1, ],
+                          cdf_lfcm = cdf_lfcm[1, ],
+                          cdf_afcm = cdf_afcm[1, ]
                           )
   
-  p_user <- ggplot(data = plot_surv, aes(x = time)) +
-    # geom_line(aes(y = cdf_faft, color = "lognormal lfAFT"), size = 1) +
-    geom_line(aes(y = cdf_faft2, color = "loglogistic lfAFT"), size = 1) +
-    geom_line(aes(y = cdf_laft, color = "lognormal lfAFT"), size = 1) +
-    geom_line(aes(y = cdf_aaft, color = "afAFT"), size = 1) +
-    geom_line(aes(y = cdf_lfcm, color = "LFCM"), size = 1) +
-    geom_line(aes(y = cdf_afcm, color = "AFCM"), size = 1) +
-    scale_color_manual(values = my_colors,
-                       breaks = c("loglogistic lfAFT", "lognormal lfAFT", "afAFT", "LFCM", "AFCM")) +
-    labs(
-      x = "Time since smoking (minutes)",
-      y = expression("P(T"<="t)"),
-      title = "Average cannabis user",
-      color = NULL
-    ) +
-    ylim(0, 1) +
-    theme_minimal() +
-    theme(legend.position="bottom")
+p_user <- ggplot(plot_surv, aes(x = time)) +
+  geom_line(aes(y = cdf_faft2, color = "loglogistic lfAFT", linetype = "loglogistic lfAFT"), size = 1) +
+  geom_line(aes(y = cdf_laft,  color = "lognormal lfAFT",   linetype = "lognormal lfAFT"),  size = 1) +
+  geom_line(aes(y = cdf_aaft,  color = "lognormal afAFT",   linetype = "lognormal afAFT"),  size = 1) +
+  geom_line(aes(y = cdf_lfcm,  color = "LFCM",              linetype = "LFCM"),             size = 1) +
+  geom_line(aes(y = cdf_afcm,  color = "AFCM",              linetype = "AFCM"),             size = 1) +
+  scale_color_manual(
+    values = my_colors,
+    breaks = c("loglogistic lfAFT", "lognormal lfAFT", "lognormal afAFT", "LFCM", "AFCM")
+  ) +
+  scale_linetype_manual(
+    values = c("loglogistic lfAFT" = "solid",
+               "lognormal lfAFT"   = "dashed",
+               "lognormal afAFT"   = "longdash",
+               "LFCM"              = "dashed",
+               "AFCM"              = "longdash"),
+    breaks = c("loglogistic lfAFT", "lognormal lfAFT", "lognormal afAFT", "LFCM", "AFCM")
+  ) +
+  labs(
+    x = "Time since smoking (minutes)",
+    y = expression(P(T) <= t),
+    title = "Average cannabis user",
+    color = "Model", 
+    linetype = "Model"
+  ) +
+  ylim(0, 1) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
 
 ```
 
@@ -447,38 +457,47 @@ cdf_aaft <- 1 - fit1.aaft[[3]]
 cdf_lfcm <- 1 - fit1.lfcm[[3]]
 cdf_afcm <- 1 - fit1.afcm[[3]]
 
-
-tgrid <- seq(0, 120, len = 1000) 
-
-  plot_surv <- data.frame(time = tgrid,
+tgrid <- seq(0, 120, len = 500) 
+plot_surv <- data.frame(time = tgrid,
                           # cdf_faft = cdf_faft[i, ],
-                          cdf_faft2 = cdf_faft2[i, ],
-                          cdf_laft = cdf_laft[i, ],
-                          cdf_aaft = cdf_aaft[i, ],
-                          cdf_lfcm = cdf_lfcm[i, ],
-                          cdf_afcm = cdf_afcm[i, ]
+                          cdf_faft2 = cdf_faft2[1, ],
+                          cdf_laft = cdf_laft[1, ],
+                          cdf_aaft = cdf_aaft[1, ],
+                          cdf_lfcm = cdf_lfcm[1, ],
+                          cdf_afcm = cdf_afcm[1, ]
                           )
   
-  p_nonuser <- ggplot(data = plot_surv, aes(x = time)) +
-    # geom_line(aes(y = cdf_faft, color = "lognormal lfAFT"), size = 1) +
-    geom_line(aes(y = cdf_faft2, color = "loglogistic lfAFT"), size = 1) +
-    geom_line(aes(y = cdf_laft, color = "lognormal lfAFT"), size = 1) +
-    geom_line(aes(y = cdf_aaft, color = "afAFT"), size = 1) +
-    geom_line(aes(y = cdf_lfcm, color = "LFCM"), size = 1) +
-    geom_line(aes(y = cdf_afcm, color = "AFCM"), size = 1) +
-    scale_color_manual(values = my_colors,
-                       breaks = c("loglogistic lfAFT", "lognormal lfAFT", "afAFT", "LFCM", "AFCM")) +
-    labs(
-      x = "Time since smoking (minutes)",
-      y = expression("P(T"<="t)"),
-      title = "Average cannabis nonuser",
-      color = NULL
-    ) +
-    ylim(0, 1) +
-    theme_minimal() +
-    theme(legend.position="bottom")
+  p_nonuser <- ggplot(plot_surv, aes(x = time)) +
+  geom_line(aes(y = cdf_faft2, color = "loglogistic lfAFT", linetype = "loglogistic lfAFT"), size = 1) +
+  geom_line(aes(y = cdf_laft,  color = "lognormal lfAFT",   linetype = "lognormal lfAFT"),  size = 1) +
+  geom_line(aes(y = cdf_aaft,  color = "lognormal afAFT",   linetype = "lognormal afAFT"),  size = 1) +
+  geom_line(aes(y = cdf_lfcm,  color = "LFCM",              linetype = "LFCM"),             size = 1) +
+  geom_line(aes(y = cdf_afcm,  color = "AFCM",              linetype = "AFCM"),             size = 1) +
+  scale_color_manual(
+    values = my_colors,
+    breaks = c("loglogistic lfAFT", "lognormal lfAFT", "lognormal afAFT", "LFCM", "AFCM")
+  ) +
+  scale_linetype_manual(
+    values = c("loglogistic lfAFT" = "solid",
+               "lognormal lfAFT"   = "dashed",
+               "lognormal afAFT"   = "longdash",
+               "LFCM"              = "dashed",
+               "AFCM"              = "longdash"),
+    breaks = c("loglogistic lfAFT", "lognormal lfAFT", "lognormal afAFT", "LFCM", "AFCM")
+  ) +
+  labs(
+    x = "Time since smoking (minutes)",
+    y = expression(P(T) <= t),
+    title = "Average cannabis nonuser",
+    color = "Model", 
+    linetype = "Model"
+  ) +
+  ylim(0, 1) +
+  theme_minimal() +
+  theme(legend.position = "bottom")
 
-p_user + p_nonuser +
+  
+  p_user + p_nonuser +
   plot_layout(guides = 'collect', axes = "collect")
 ```
 
@@ -564,7 +583,7 @@ df_post2_r$is_user_45 <- ifelse(df_post2_r$time_since_use <= 45, 1, 0)
 df_post2_r$is_user_60 <- ifelse(df_post2_r$time_since_use <= 60, 1, 0)
 df_post2_r$is_user_120 <- ifelse(df_post2_r$time_since_use <= 120, 1, 0)
 
-fit1.logistic = pfr(is_user_45 ~ age_in_years + bmi + lf(X_mat, argvals = sgrid), 
+fit1.logistic = pfr(is_user_120 ~ age_in_years + bmi + lf(X_mat, argvals = sgrid), 
                     family = binomial(), method = "REML", data = df_post2_r)
 fit2.logistic = pfr(is_user_60 ~ age_in_years + bmi + lf(X_mat, argvals = sgrid), 
                     family = binomial(), method = "REML", data = df_post2_r)
@@ -614,7 +633,7 @@ ggplot(data = df_plot, mapping = aes(x = time)) +
 ### cross-validated Brier score
 # cross validated c-index and Brier's score for each model
 ## introduce variables in the cross validation
-set.seed(916) 
+set.seed(1234) 
 n_folds <- 10 # number of folds
 ### variables that store the c-index and Brier's score in each calculation
 Brier_faft <- Brier_faft2 <- Brier_laft <- Brier_aaft <- Brier_lfcm <- Brier_afcm <- Brier_logistic <- rep(0, n_folds)

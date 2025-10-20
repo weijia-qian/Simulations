@@ -26,18 +26,23 @@ cal_c <- function(marker, Stime, status){
 ### function "cal_stime()" returns the survival times estimates
 cal_stime <- function(fit, data, tgrid = seq(0, 10, len = 1000), family = "cox.ph"){
   if (family == "cox.ph") {
-    ## calculate estimated baseline hazard
-    t0 <- rev(fit$family$data$tr) # observed event times
-    H0_hat <- rev(fit$family$data$h) # Breslow estimator of the cumulative hazard function
-    H0_fit <- scam(log(H0_hat + 1e-8) ~ s(t0, bs = "mpi") - 1) # smooth while imposing non-decreasing shape constraints
-    #H0_fit <- scam(H0_hat ~ s(t0, bs = "mpi") - 1)
-    ## evaluate smoothed H0 on fine grid
-    H0_prd <- exp(predict(H0_fit, newdata = data.frame(t0 = tgrid)))
-    #H0_prd <- pmax(0, predict(H0_fit, newdata = data.frame(t0 = tgrid)))
-    ## estimate eta from estimated functional surface of real data
-    eta_i <- matrix(predict(fit, data), ncol = 1)
-    ## calculate survival times
-    S_i <- exp(-(exp(eta_i) %*% H0_prd))
+    n <- nrow(data)
+    nS_pred <- length(tgrid)
+    df_pred <- data[rep(1:n, each = nS_pred), ]
+    df_pred$Y <- rep(tgrid, n)
+    S_i <- matrix(predict(fit, newdata = df_pred, type = "response"), nrow = n, ncol = nS_pred, byrow = TRUE)
+    # ## calculate estimated baseline hazard
+    # t0 <- rev(fit$family$data$tr) # observed event times
+    # H0_hat <- rev(fit$family$data$h) # Breslow estimator of the cumulative hazard function
+    # H0_fit <- scam(log(H0_hat + 1e-8) ~ s(t0, bs = "mpi") - 1) # smooth while imposing non-decreasing shape constraints
+    # #H0_fit <- scam(H0_hat ~ s(t0, bs = "mpi") - 1)
+    # ## evaluate smoothed H0 on fine grid
+    # H0_prd <- exp(predict(H0_fit, newdata = data.frame(t0 = tgrid)))
+    # #H0_prd <- pmax(0, predict(H0_fit, newdata = data.frame(t0 = tgrid)))
+    # ## estimate eta from estimated functional surface of real data
+    # eta_i <- matrix(predict(fit, data), ncol = 1)
+    # ## calculate survival times
+    # S_i <- exp(-(exp(eta_i) %*% H0_prd))
   } else if (family == "lognormal"){
     lp <- predict(fit, data, type = "response")
     scale <- as.numeric(gsub(".*\\(([^)]+)\\).*", "\\1", fit$family$family))
