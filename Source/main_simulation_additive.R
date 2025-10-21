@@ -35,11 +35,8 @@ load(here("Source", "dat_func.Rdata")) # load real data
 ###############################################################
 ## set simulation design elements
 ###############################################################
-# family = c("lognormal", "loglogistic", "cox.ph")
-# n = c(200)
-# nS = c(50, 100, 500)
-family = c("cox.ph")
-n = c(100, 500)
+family = c("lognormal", "cox.ph")
+n = c(100, 200, 500)
 nS = c(100)
 beta_type = c('nonlinear1')
 b = c(0.5)
@@ -107,11 +104,22 @@ for (iter in 1:N_iter) {
   time_stamp <- toc(quiet = TRUE)
   time_afcm <- time_stamp$toc - time_stamp$tic
   
-  # linear functional log-normal AFT model
+  # linear functional log-normal AFT model (mgcv)
   tic()
   fit.laft <- gam(logY ~ 1 + s(S, by = X_L, bs = "ps", k = 20), family = cnorm(), data = sim_data$data)
   time_stamp <- toc(quiet = TRUE)
   time_laft <- time_stamp$toc - time_stamp$tic
+  
+  # lognormal lfAFT
+  lambda_grid <- exp(seq(log(1000), log(10000), length.out = 500))
+  model <- "lognormal"
+  tic()
+  best_lambda <- optimize_lambda(lambda_grid = lambda_grid, data = sim_data$data, y = "Y", delta = "delta",
+                                 x = "X", x_as_regex = FALSE, family = model)$lambda
+  fit.laft2 <- optimize_AFT(data = sim_data$data, y = "Y", delta = "delta", x = "X", x_as_regex = FALSE, 
+                           family = model, lambda = best_lambda, se = TRUE, bootstrap = FALSE)
+  time_stamp <- toc(quiet = TRUE)
+  time_laft2 <- time_stamp$toc - time_stamp$tic
   
   # linear functional Cox model
   tic()
@@ -132,13 +140,14 @@ for (iter in 1:N_iter) {
   eta_aaft <- predict(fit.aaft, sim_data_test$data, type = "response")
   eta_afcm <- rowSums(predict(fit.afcm, sim_data_test$data, type = "terms"))
   eta_laft <- predict(fit.laft, sim_data_test$data, type = "response")
+  eta_laft2 <- predict_AFT(fit.laft2, sim_data_test$data)
   eta_lfcm <- rowSums(predict(fit.lfcm, sim_data_test$data, type = "terms"))
   
   ## calculate c-index
-  AUC_aaft <- cal_c(marker = -eta_aaft, Stime = time_test, status = event_test)
-  AUC_afcm <- cal_c(marker = eta_afcm, Stime = time_test, status = event_test)
-  AUC_laft <- cal_c(marker = -eta_laft, Stime = time_test, status = event_test)
-  AUC_lfcm <- cal_c(marker = eta_lfcm, Stime = time_test, status = event_test)
+  # AUC_aaft <- cal_c(marker = -eta_aaft, Stime = time_test, status = event_test)
+  # AUC_afcm <- cal_c(marker = eta_afcm, Stime = time_test, status = event_test)
+  # AUC_laft <- cal_c(marker = -eta_laft, Stime = time_test, status = event_test)
+  # AUC_lfcm <- cal_c(marker = eta_lfcm, Stime = time_test, status = event_test)
   
   # set the time grid to evaluate survival function
   tmax <- 2000 # consistent with 'tmax' in simulate_Cox2()
@@ -151,15 +160,19 @@ for (iter in 1:N_iter) {
   df_pred <- sim_data_test$data[rep(1:n, each = nS_pred), ]
   df_pred$Y <- rep(tgrid, n)
   S_afcm_test <- matrix(predict(fit.afcm, newdata = df_pred, type = "response"), nrow = n, ncol = nS_pred, byrow = TRUE)
-  # S_afcm_test <- cal_stime(fit = fit.afcm, data = sim_data_test$data, tgrid = tgrid, family = 'cox.ph')
   S_laft_test <- cal_stime(fit = fit.laft, data = sim_data_test$data, tgrid = tgrid, family = 'lognormal')
   S_lfcm_test <- matrix(predict(fit.lfcm, newdata = df_pred, type = "response"), nrow = n, ncol = nS_pred, byrow = TRUE)
-  # S_lfcm_test <- cal_stime(fit = fit.lfcm, data = sim_data_test$data, tgrid = tgrid, family = 'cox.ph')
+  
+  eta_laft2 <- as.numeric(eta_laft2)
+  scale_laft2 <- fit.laft2$b_hat
+  S_laft2_test <- outer(eta_laft2, tgrid, 
+                        function(eta_laft2_i, tgrid_j) pnorm((log(tgrid_j) - eta_laft2_i) / scale_laft2, lower.tail = FALSE))
   
   ## calculate brier score
   Brier_aaft <- cal_Brier(S_aaft_test, Stime = time_test, status = event_test, tgrid = tgrid)
   Brier_afcm <- cal_Brier(S_afcm_test, Stime = time_test, status = event_test, tgrid = tgrid)
   Brier_laft <- cal_Brier(S_laft_test, Stime = time_test, status = event_test, tgrid = tgrid)
+  Brier_laft2 <- cal_Brier(S_laft2_test, Stime = time_test, status = event_test, tgrid = tgrid)
   Brier_lfcm <- cal_Brier(S_lfcm_test, Stime = time_test, status = event_test, tgrid = tgrid)
   
   ###############################################################
@@ -206,16 +219,19 @@ for (iter in 1:N_iter) {
   df_pred <- sim_data$data[rep(1:n, each = nS_pred), ]
   df_pred$Y <- rep(tgrid, n)
   S_afcm <- matrix(predict(fit.afcm, newdata = df_pred, type = "response"), nrow = n, ncol = nS_pred, byrow = TRUE)
-  # S_afcm <- cal_stime(fit = fit.afcm, data = sim_data$data, tgrid = tgrid, family = 'cox.ph')
   S_laft <- cal_stime(fit = fit.laft, data = sim_data$data, tgrid = tgrid, family = 'lognormal')
   S_lfcm <- matrix(predict(fit.lfcm, newdata = df_pred, type = "response"), nrow = n, ncol = nS_pred, byrow = TRUE)
-  # S_lfcm <- cal_stime(fit = fit.lfcm, data = sim_data$data, tgrid = tgrid, family = 'cox.ph')
+  
+  lp_laft2 <- as.numeric(fit.laft2$lp)
+  S_laft2 <- outer(lp_laft2, tgrid, 
+                  function(lp_laft2_i, tgrid_j) pnorm((log(tgrid_j) - lp_laft2_i) / scale_laft2, lower.tail = FALSE))
 
   # calculate pointwise squared errors
   df_surv <- data.frame(time = tgrid,
                         se_surv_aaft = colMeans((S_true - S_aaft)^2),
                         se_surv_afcm = colMeans((S_true - S_afcm)^2),
                         se_surv_laft = colMeans((S_true - S_laft)^2),
+                        se_surv_laft2 = colMeans((S_true - S_laft2)^2),
                         se_surv_lfcm = colMeans((S_true - S_lfcm)^2))
   
   df_info <- data.frame(scenario = scenario,
@@ -227,17 +243,15 @@ for (iter in 1:N_iter) {
                         beta_type = beta_type,
                         b = b,
                         censor_rate = 1 - mean(sim_data$data$delta),
-                        AUC_aaft,
-                        AUC_afcm,
-                        AUC_laft,
-                        AUC_lfcm,
                         Brier_aaft,
                         Brier_afcm,
                         Brier_laft,
+                        Brier_laft2,
                         Brier_lfcm,
                         time_aaft,
                         time_afcm,
                         time_laft,
+                        time_laft2,
                         time_lfcm)
   
   list(
@@ -265,7 +279,7 @@ for (iter in 1:N_iter) {
 results <- Filter(Negate(is.null), results)
 
 # record date for analysis; create directory for results
-Date = gsub("-", "", Sys.Date())
+Date = paste0(gsub("-", "", Sys.Date()), "_additive")
 dir.create(file.path(here::here("Output"), Date), showWarnings = FALSE)
 
 filename = paste0(here::here("Output", Date), "/", scenario, ".RDA")
