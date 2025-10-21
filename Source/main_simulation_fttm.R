@@ -41,7 +41,8 @@ load(here("Source", "dat_func.Rdata")) # load real data
 ## set simulation design elements
 ###############################################################
 family = c("lognormal", "loglogistic", "cox.ph")
-n = c(100, 200, 500)
+# n = c(100, 200, 500)
+n = c(100)
 nS = c(100)
 # nS = c(50, 100, 500)
 beta_type = c('simple')
@@ -111,19 +112,23 @@ for(iter in 1:N_iter){
   time_cox <- time_stamp$toc - time_stamp$tic
   
   # lognormal lfAFT
-  tic()
   lambda_grid <- exp(seq(log(1000), log(10000), length.out = 500))
   model <- "lognormal"
-  best_lambda <- optimize_lambda(Y, delta, X, data = sim_data$data, family = model, lambda_grid = lambda_grid)
-  fit.faft <- optimize_AFT(Y, delta, X, data = sim_data$data, family = model, lambda = best_lambda, se = TRUE)
+  tic()
+  best_lambda <- optimize_lambda(lambda_grid = lambda_grid, data = sim_data$data, y = "Y", delta = "delta",
+                                 x = "X", x_as_regex = FALSE, family = model)$lambda
+  fit.faft <- optimize_AFT(data = sim_data$data, y = "Y", delta = "delta", x = "X", x_as_regex = FALSE, 
+                           family = model, lambda = best_lambda, se = TRUE, bootstrap = FALSE)
   time_stamp <- toc(quiet = TRUE)
   time_faft <- time_stamp$toc - time_stamp$tic
   
   # loglogistic lfAFT
-  tic()
   model <- "loglogistic"
-  best_lambda <- optimize_lambda(Y, delta, X, data = sim_data$data, family = model, lambda_grid = lambda_grid)
-  fit.faft2 <- optimize_AFT(Y, delta, X, data = sim_data$data, family = model, lambda = best_lambda, se = TRUE)
+  tic()
+  best_lambda <- optimize_lambda(lambda_grid = lambda_grid, data = sim_data$data, y = "Y", delta = "delta",
+                                 x = "X", x_as_regex = FALSE, family = model)$lambda
+  fit.faft2 <- optimize_AFT(data = sim_data$data, y = "Y", delta = "delta", x = "X", x_as_regex = FALSE, 
+                           family = model, lambda = best_lambda, se = TRUE, bootstrap = FALSE)
   time_stamp <- toc(quiet = TRUE)
   time_faft2 <- time_stamp$toc - time_stamp$tic
   
@@ -158,11 +163,11 @@ for(iter in 1:N_iter){
   eta_fttm <- predict_FTTM(fit.fttm, sim_data_test$data)
   
   ## calculate c-index
-  AUC_norm <- cal_c(marker = -eta_norm, Stime = time_test, status = event_test)
-  AUC_cox <- cal_c(marker = eta_cox, Stime = time_test, status = event_test)
-  AUC_faft <- cal_c(marker = -eta_faft, Stime = time_test, status = event_test)
-  AUC_faft2 <- cal_c(marker = -eta_faft2, Stime = time_test, status = event_test)
-  AUC_fttm <- cal_c(marker = -eta_fttm, Stime = time_test, status = event_test)
+  # AUC_norm <- cal_c(marker = -eta_norm, Stime = time_test, status = event_test)
+  # AUC_cox <- cal_c(marker = eta_cox, Stime = time_test, status = event_test)
+  # AUC_faft <- cal_c(marker = -eta_faft, Stime = time_test, status = event_test)
+  # AUC_faft2 <- cal_c(marker = -eta_faft2, Stime = time_test, status = event_test)
+  # AUC_fttm <- cal_c(marker = -eta_fttm, Stime = time_test, status = event_test)
   
   ## calculate the brier score
   tmax <- 120
@@ -214,8 +219,8 @@ for(iter in 1:N_iter){
   se.coef.fttm <- (coef.true - fit.fttm$beta1_hat)^2
   
   # calculate CMA CIs
-  cma.coef.norm <- get_CMA(fit.norm)
-  cma.coef.cox <- get_CMA(fit.cox)
+  # cma.coef.norm <- get_CMA(fit.norm)
+  # cma.coef.cox <- get_CMA(fit.cox)
   
   # fit AFT model using sieve algorithm
   #sieve.results <- est_sieve(data = sim_data$data)
@@ -226,16 +231,10 @@ for(iter in 1:N_iter){
                         se_coef_norm = as.numeric(se.coef.norm),         # pointwise squared error
                         lb_coef_norm = as.numeric(coef.est.norm[[1]] - qnorm(0.975) * coef.est.norm[[2]]), # pointwise CI lower bound
                         ub_coef_norm = as.numeric(coef.est.norm[[1]] + qnorm(0.975) * coef.est.norm[[2]]), # pointwise CI upper bound
-                        cma_lb_coef_norm = as.numeric(cma.coef.norm[[1]]), # CMA CI lower bound
-                        cma_ub_coef_norm = as.numeric(cma.coef.norm[[2]]), # CMA CI upper bound
                         est_coef_cox = as.numeric(coef.est.cox[[1]]), 
                         se_coef_cox = as.numeric(se.coef.cox), 
-                        #est_coef_sieve = as.numeric(sieve.results[[1]]),
-                        #se_coef_sieve = as.numeric(sieve.results[[2]]),
                         lb_coef_cox = as.numeric(coef.est.cox[[1]] - qnorm(0.975) * coef.est.cox[[2]]), 
                         ub_coef_cox = as.numeric(coef.est.cox[[1]] + qnorm(0.975) * coef.est.cox[[2]]),
-                        cma_lb_coef_cox = as.numeric(cma.coef.cox[[1]]),
-                        cma_ub_coef_cox = as.numeric(cma.coef.cox[[2]]),
                         est_coef_faft = fit.faft$beta1_hat, 
                         se_coef_faft = se.coef.faft, 
                         lb_coef_faft = fit.faft$beta1_ci_lower, 
@@ -253,9 +252,7 @@ for(iter in 1:N_iter){
            cover_coef_cox = (true_coef > lb_coef_cox) & (true_coef < ub_coef_cox),
            cover_coef_faft = (true_coef > lb_coef_faft) & (true_coef < ub_coef_faft),
            cover_coef_faft2 = (true_coef > lb_coef_faft2) & (true_coef < ub_coef_faft2),
-           cover_coef_fttm = (true_coef > lb_coef_fttm) & (true_coef < ub_coef_fttm),
-           cover_cma_coef_norm = (true_coef > cma_lb_coef_norm) & (true_coef < cma_ub_coef_norm),
-           cover_cma_coef_cox = (true_coef > cma_lb_coef_cox) & (true_coef < cma_ub_coef_cox))
+           cover_coef_fttm = (true_coef > lb_coef_fttm) & (true_coef < ub_coef_fttm))
   
   ###############################################################
   ## pointwise squared errors for survival function
@@ -312,11 +309,11 @@ for(iter in 1:N_iter){
                         beta_type = beta_type,
                         b = b,
                         censor_rate = 1 - mean(sim_data$data$delta),
-                        AUC_norm,
-                        AUC_cox,
-                        AUC_faft,
-                        AUC_faft2,
-                        AUC_fttm,
+                        # AUC_norm,
+                        # AUC_cox,
+                        # AUC_faft,
+                        # AUC_faft2,
+                        # AUC_fttm,
                         Brier_norm,
                         Brier_cox,
                         Brier_faft,
@@ -353,7 +350,7 @@ for(iter in 1:N_iter){
 results <- Filter(Negate(is.null), results)
 
 # record date for analysis; create directory for results
-Date = gsub("-", "", Sys.Date())
+Date = paste0(gsub("-", "", Sys.Date()), "_fttm")
 dir.create(file.path(here::here("Output"), Date), showWarnings = FALSE)
 
 filename = paste0(here::here("Output", Date), "/", scenario, ".RDA")

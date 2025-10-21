@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --array=1-9%9
+#SBATCH --array=1-3%3
 #SBATCH --job-name=simulation_job
 #SBATCH --partition=wrobel
 #SBATCH --output=main_simulation_fttm.out

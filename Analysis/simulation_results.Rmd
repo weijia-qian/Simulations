@@ -48,8 +48,8 @@ my_colors <- c(
 )
 fig_dir <- "/Users/weijia/Research/FDA/Drafts"
 
-# folder_path <- "/Users/weijia/Research/FDA/Simulations/Output/20250720"
-folder_path <- "/Users/weijia/Research/FDA/Simulations/Output/20250819"
+folder_path <- "/Users/weijia/Research/FDA/Simulations/Output/20251020"
+# folder_path <- "/Users/weijia/Research/FDA/Simulations/Output/20250819"
 rda_files <- list.files(path = folder_path, pattern = "\\.RDA$", full.names = TRUE)
 all_results <- list()
 for (i in 1:length(rda_files)) {
@@ -70,13 +70,13 @@ for (scenario in all_results) {
 
 # box plot
 table_Brier <- all_info %>%
-  pivot_longer(cols = c("Brier_norm", "Brier_cox", "Brier_faft2"),
+  pivot_longer(cols = c("Brier_faft", "Brier_cox", "Brier_faft2"),
                names_to = "type",
                values_to = "value") %>%
   mutate(est_model = case_when(
             str_detect(type, "cox") ~ "LFCM",
             str_detect(type, "fttm") ~ "FTTM",
-            str_detect(type, "norm") ~ "lognormal lfAFT",
+            # str_detect(type, "norm") ~ "lognormal lfAFT",
             str_detect(type, "faft2") ~ "loglogistic lfAFT",
             .default = "lognormal lfAFT"),
          est_model = factor(est_model, 
@@ -132,11 +132,11 @@ for (scenario in all_results) {
 
 # box plot
 table_mise_coef <- all_coef %>%
-  pivot_longer(cols = c("mise_coef_norm", "mise_coef_cox", "mise_coef_faft2"),
+  pivot_longer(cols = c("mise_coef_faft", "mise_coef_cox", "mise_coef_faft2"),
                names_to = "type",
                values_to = "value") %>%
   mutate(est_model = case_when(str_detect(type, "cox") ~ "LFCM",
-                               str_detect(type, "norm") ~ "lognormal lfAFT",
+                               # str_detect(type, "norm") ~ "lognormal lfAFT",
                                str_detect(type, "faft2") ~ "loglogistic lfAFT",
                                .default = "lognormal lfAFT"),
          est_model = factor(est_model, 
@@ -185,11 +185,11 @@ for (scenario in all_results) {
 }
 
 table_mise_surv <- all_surv %>%
-  pivot_longer(cols = c("mise_surv_norm", "mise_surv_cox", "mise_surv_faft2"),
+  pivot_longer(cols = c("mise_surv_faft", "mise_surv_cox", "mise_surv_faft2"),
                names_to = "type",
                values_to = "value") %>%
   mutate(est_model = case_when(str_detect(type, "cox") ~ "LFCM",
-                               str_detect(type, "norm") ~ "lognormal lfAFT",
+                               # str_detect(type, "norm") ~ "lognormal lfAFT",
                                str_detect(type, "faft2") ~ "loglogistic lfAFT",
                                .default = "lognormal lfAFT"),
          est_model = factor(est_model, 
