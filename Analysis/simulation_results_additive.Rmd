@@ -43,8 +43,8 @@ my_colors <- c(
   "afAFT" = "#B481BB"
 )
 
-# folder_path <- "/Users/weijia/Research/FDA/Simulations/Output/20250709_additive"
-folder_path <- "/Users/weijia/Research/FDA/Simulations/Output/20250821_additive"
+folder_path <- "/Users/weijia/Research/FDA/Simulations/Output/20251020_additive"
+# folder_path <- "/Users/weijia/Research/FDA/Simulations/Output/20250821_additive"
 rda_files <- list.files(path = folder_path, pattern = "\\.RDA$", full.names = TRUE)
 all_results <- list()
 for (i in 1:length(rda_files)) {
@@ -84,13 +84,13 @@ for (scenario in all_results) {
 }
 
 table_Brier <- all_info %>%
-  filter(family != "loglogistic") %>%
-  pivot_longer(cols = c("Brier_aaft", "Brier_afcm", "Brier_laft", "Brier_lfcm"),
+  #filter(family != "loglogistic") %>%
+  pivot_longer(cols = c("Brier_aaft", "Brier_afcm", "Brier_laft2", "Brier_lfcm"),
                names_to = "type",
                values_to = "value") %>%
   mutate(est_model = case_when(str_detect(type, "aaft") ~ "afAFT",
                                str_detect(type, "afcm") ~ "AFCM",
-                               str_detect(type, "laft") ~ "lfAFT",
+                               str_detect(type, "laft2") ~ "lfAFT",
                                str_detect(type, "lfcm") ~ "LFCM"),
          est_model = factor(est_model, 
                             levels = c("afAFT", "AFCM", "lfAFT", "LFCM")),

@@ -30,6 +30,7 @@ if(substring(wd, 2, 6) == "Users"){
 source(here("Source", "simulate_AFT2.R"))
 source(here("Source", "simulate_Cox2.R"))
 source(here("Source", "calc_auc_brier.R"))
+source(here("Source", "fit_penalized_aft.R"))
 load(here("Source", "dat_func.Rdata")) # load real data
 
 ###############################################################
