@@ -43,7 +43,7 @@ my_colors <- c(
   "afAFT" = "#B481BB"
 )
 
-folder_path <- "/Users/weijia/Research/FDA/Simulations/Output/20251020_additive"
+folder_path <- "/Users/weijia/Research/FDA/Simulations/Output/20251022_additive"
 # folder_path <- "/Users/weijia/Research/FDA/Simulations/Output/20250821_additive"
 rda_files <- list.files(path = folder_path, pattern = "\\.RDA$", full.names = TRUE)
 all_results <- list()
@@ -97,7 +97,7 @@ table_Brier <- all_info %>%
          family = recode(family, "cox.ph" = "CoxPH"),
          log_value = log(value))
 
-plot_Brier <- table_Brier %>%
+plot_additive_Brier <- table_Brier %>%
   ggplot(aes(factor(nS), value, fill = est_model)) + 
   geom_boxplot(outliers = FALSE, fatten = 1.3) +
   scale_fill_manual(values = my_colors) +
@@ -147,6 +147,7 @@ for (scenario in all_results) {
                            mise_surv_aaft = mean(iteration$surv$se_surv_aaft),
                            mise_surv_afcm = mean(iteration$surv$se_surv_afcm),
                            mise_surv_laft = mean(iteration$surv$se_surv_laft),
+                           mise_surv_laft2 = mean(iteration$surv$se_surv_laft2),
                            mise_surv_lfcm = mean(iteration$surv$se_surv_lfcm))
 
     # Append to all_coef
@@ -157,19 +158,19 @@ for (scenario in all_results) {
 # boxplot
 table_surv <- all_surv %>%
   filter(family != "loglogistic") %>%
-  pivot_longer(cols = c("mise_surv_aaft", "mise_surv_afcm", "mise_surv_laft", "mise_surv_lfcm"),
+  pivot_longer(cols = c("mise_surv_aaft", "mise_surv_afcm", "mise_surv_laft2", "mise_surv_lfcm"),
                names_to = "type",
                values_to = "value") %>%
   mutate(est_model = case_when(str_detect(type, "aaft") ~ "afAFT",
                                str_detect(type, "afcm") ~ "AFCM",
-                               str_detect(type, "laft") ~ "lfAFT",
+                               str_detect(type, "laft2") ~ "lfAFT",
                                str_detect(type, "lfcm") ~ "LFCM"),
          est_model = factor(est_model, 
                             levels = c("afAFT", "AFCM", "lfAFT", "LFCM")),
          family = recode(family, "cox.ph" = "CoxPH"),
          log_value = log(value))
 
-plot_surv <- table_surv %>%
+plot_additive_surv <- table_surv %>%
   ggplot(aes(factor(nS), log_value, fill = est_model)) + 
   geom_boxplot(outliers = FALSE, fatten = 1.3) +
   scale_fill_manual(values = my_colors) +
@@ -184,7 +185,7 @@ plot_surv <- table_surv %>%
     # strip.background = element_blank()
   )
 
-plot_additive <- plot_Brier + plot_surv +
+plot_additive <- plot_additive_Brier + plot_additive_surv +
   plot_layout(guides = 'collect', axes = "collect")
 
 fig_dir <- "/Users/weijia/Research/FDA/Drafts"

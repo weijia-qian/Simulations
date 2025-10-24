@@ -12,6 +12,7 @@ output:
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 
+suppressPackageStartupMessages(library(caret))
 suppressPackageStartupMessages(library(here))
 suppressPackageStartupMessages(library(MASS))
 suppressPackageStartupMessages(library(mgcv))
@@ -454,9 +455,10 @@ p_coef1 <- ggplot(data = plot_coef1, aes(x = time)) +
     geom_ribbon(aes(ymin = coef_laft_lb, ymax = coef_laft_ub, fill = "lognormal lfAFT"), alpha = 0.3) +
     # geom_ribbon(aes(ymin = coef_lfcm_lb, ymax = coef_lfcm_ub, fill = "LFCM"), alpha = 0.3) +
     scale_color_manual(values = my_colors,
-                       breaks = c("loglogistic lfAFT", "lognormal lfAFT")) +
+                       breaks = c("lognormal lfAFT", "loglogistic lfAFT")) +
     scale_fill_manual(values = my_colors,
-                       breaks = c("loglogistic lfAFT", "lognormal lfAFT")) +
+                       breaks = c("lognormal lfAFT", "loglogistic lfAFT")) +
+  ylim(-0.25, 0.2) +
     labs(
       x = NULL,
       y = expression(beta~"(s)"),
@@ -473,9 +475,10 @@ p_coef2 <- ggplot(data = plot_coef2, aes(x = time)) +
     geom_ribbon(aes(ymin = coef_laft_lb, ymax = coef_laft_ub, fill = "lognormal lfAFT"), alpha = 0.3) +
     # geom_ribbon(aes(ymin = coef_lfcm_lb, ymax = coef_lfcm_ub, fill = "LFCM"), alpha = 0.3) +
     scale_color_manual(values = my_colors,
-                       breaks = c("loglogistic lfAFT", "lognormal lfAFT")) +
+                       breaks = c("lognormal lfAFT", "loglogistic lfAFT")) +
     scale_fill_manual(values = my_colors,
-                       breaks = c("loglogistic lfAFT", "lognormal lfAFT")) +
+                       breaks = c("lognormal lfAFT", "loglogistic lfAFT")) +
+  ylim(-0.25, 0.2) +
     labs(
       x = NULL,
       y = expression(beta~"(s)"),
@@ -625,7 +628,7 @@ p_comb <- plot_grid(
   ncol = 1, rel_heights = c(0.1, 1)   # adjust height ratio
 )
 
-ggsave(file.path(fig_dir, "fig_data_coef.jpeg"), p_comb, width = 8, height = 6, dpi = 500)
+ggsave(file.path(fig_dir, "fig_data_coef_new.jpeg"), p_comb, width = 8, height = 6, dpi = 500)
 ```
 
 ```{r, residual plots}
@@ -844,19 +847,22 @@ ggplot(hazard_df) +
 ```{r, functional logstic regression}
 library(tidyfun)
 df_post1_r$X_mat <- as.matrix(df_post1_r[, grep("^pct_chg_", colnames(df_post1_r))])
-df_post1_r$is_user_45 <- ifelse(df_post1_r$time_since_use <= 45, 1, 0)
+#df_post1_r$is_user_45 <- ifelse(df_post1_r$time_since_use <= 45, 1, 0)
 df_post1_r$is_user_60 <- ifelse(df_post1_r$time_since_use <= 60, 1, 0)
 df_post1_r$is_user_120 <- ifelse(df_post1_r$time_since_use <= 120, 1, 0)
+df_post2_r$X_mat <- as.matrix(df_post2_r[, grep("^pct_chg_", colnames(df_post2_r))])
+df_post2_r$is_user_60 <- ifelse(df_post2_r$time_since_use <= 60, 1, 0)
+df_post2_r$is_user_120 <- ifelse(df_post2_r$time_since_use <= 120, 1, 0)
 
-fit1.logistic = pfr(is_user_45 ~ age_in_years + bmi + lf(X_mat, argvals = sgrid), 
+fit1.logistic = pfr(is_user_60 ~ age_in_years + bmi + lf(X_mat, argvals = sgrid1), 
                     family = binomial(), method = "REML", data = df_post1_r)
-fit2.logistic = pfr(is_user_60 ~ age_in_years + bmi + lf(X_mat, argvals = sgrid), 
-                    family = binomial(), method = "REML", data = df_post1_r)
-fit3.logistic = pfr(is_user_120 ~ age_in_years + bmi + lf(X_mat, argvals = sgrid), 
-                    family = binomial(), method = "REML", data = df_post1_r)
-summary(fit1.logistic)
-summary(fit2.logistic)
-summary(fit3.logistic)
+fit2.logistic = pfr(is_user_120 ~ age_in_years + bmi + lf(X_mat, argvals = sgrid2), 
+                    family = binomial(), method = "REML", data = df_post2_r)
+# fit3.logistic = pfr(is_user_120 ~ age_in_years + bmi + lf(X_mat, argvals = sgrid), 
+#                     family = binomial(), method = "REML", data = df_post1_r)
+# summary(fit1.logistic)
+# summary(fit2.logistic)
+# summary(fit3.logistic)
 
 coef_df = 
   coef(fit3.logistic) %>% 
@@ -894,7 +900,7 @@ ggplot(data = df_plot, mapping = aes(x = time)) +
   theme(legend.position = c(0.9, 0.9))
 ```
 
-```{r, Brier score}
+```{r Brier score}
 ### cross-validated Brier score
 # cross validated c-index and Brier's score for each model
 ## introduce variables in the cross validation
@@ -953,8 +959,8 @@ for(k in 1:n_folds){
     fit_faft2 <- fit_mgcv(data = train_data, family = "loglogistic", sgrid = sgrid)[[1]]
     fit_laft <- fit_mgcv(data = train_data, family = "LAFT", sgrid = sgrid)[[1]]
     fit_aaft <- fit_mgcv(data = train_data, family = "AAFT", sgrid = sgrid)[[1]]
-    fit_lfcm <- fit_mgcv(data = train_data, family = "LFCM", sgrid = sgrid)[[1]]
-    fit_afcm <- fit_mgcv(data = train_data, family = "AFCM", sgrid = sgrid)[[1]]
+    # fit_lfcm <- fit_mgcv(data = train_data, family = "LFCM", sgrid = sgrid)[[1]]
+    # fit_afcm <- fit_mgcv(data = train_data, family = "AFCM", sgrid = sgrid)[[1]]
     fit_logistic = pfr(is_user_60 ~ age_in_years + bmi + lf(X_mat, argvals = sgrid), 
                     family = binomial(), method = "REML", data = train_data)
     
@@ -963,9 +969,9 @@ for(k in 1:n_folds){
     eta_faft2 <- as.numeric(predict_AFT(fit_faft2, test_data2))
     eta_laft <- predict(fit_laft, test_data2, type = "link")
     eta_aaft <- predict(fit_aaft, test_data2, type = "link")
-    eta_lfcm <- predict(fit_lfcm, test_data2, type = "link")
-    eta_afcm <- predict(fit_afcm, test_data2, type = "link")
-    eta_logistic <- predict(fit1.logistic, newdata = df_post1_r, type = "response")
+    # eta_lfcm <- predict(fit_lfcm, test_data2, type = "link")
+    # eta_afcm <- predict(fit_afcm, test_data2, type = "link")
+    eta_logistic <- predict(fit_logistic, newdata = test_data, type = "response")
     
     ## calculate the cross-validated c-index
     # cindex_laft[k] <- cal_c(marker = -eta_laft, Stime = time_test, status = event_test)
@@ -983,15 +989,15 @@ for(k in 1:n_folds){
                     function(eta_faft2_i, tgrid_j) pnorm((log(tgrid_j) - eta_faft2_i) / scale_faft2, lower.tail = FALSE))
     S_laft <- cal_stime(fit = fit_laft, data = test_data2, tgrid = tgrid, family = 'lognormal')
     S_aaft <- cal_stime(fit = fit_aaft, data = test_data2, tgrid = tgrid, family = 'lognormal')
-    S_lfcm <- cal_stime(fit = fit_lfcm, data = test_data2, tgrid = tgrid, family = 'cox.ph')
-    S_afcm <- cal_stime(fit = fit_afcm, data = test_data2, tgrid = tgrid, family = 'cox.ph')
+    # S_lfcm <- cal_stime(fit = fit_lfcm, data = test_data2, tgrid = tgrid, family = 'cox.ph')
+    # S_afcm <- cal_stime(fit = fit_afcm, data = test_data2, tgrid = tgrid, family = 'cox.ph')
     
     Brier_faft[k] <- cal_Brier(S_faft, Stime = time_test, status = event_test, tgrid = tgrid)
     Brier_faft2[k] <- cal_Brier(S_faft2, Stime = time_test, status = event_test, tgrid = tgrid)
     Brier_laft[k] <- cal_Brier(S_laft, Stime = time_test, status = event_test, tgrid = tgrid)
     Brier_aaft[k] <- cal_Brier(S_aaft, Stime = time_test, status = event_test, tgrid = tgrid)
-    Brier_lfcm[k] <- cal_Brier(S_lfcm, Stime = time_test, status = event_test, tgrid = tgrid)
-    Brier_afcm[k] <- cal_Brier(S_afcm, Stime = time_test, status = event_test, tgrid = tgrid)
+    # Brier_lfcm[k] <- cal_Brier(S_lfcm, Stime = time_test, status = event_test, tgrid = tgrid)
+    # Brier_afcm[k] <- cal_Brier(S_afcm, Stime = time_test, status = event_test, tgrid = tgrid)
     
     # Brier score for functional logistic regression
     pred_p <- predict(fit_logistic, newdata = test_data, type = "response")
@@ -999,9 +1005,117 @@ for(k in 1:n_folds){
     
 }
 
-df_Brier <- data.frame(Model = c("loglogistic lfAFT", "lognormal lfAFT", "mgcv lfAFT", "mgcv afAFT", "mgcv LFCM", "mgcv AFCM", "Functional Logistic"),
-                       Brier_score = c(mean(Brier_faft2), mean(Brier_faft), mean(Brier_laft), mean(Brier_aaft), 
-                                       mean(Brier_lfcm), mean(Brier_afcm), mean(Brier_logistic)))
+df_Brier <- data.frame(Model = c("loglogistic lfAFT", "lognormal lfAFT", "mgcv lfAFT", "mgcv afAFT", "Functional Logistic"),
+                       Brier_score = c(mean(Brier_faft2), mean(Brier_faft), mean(Brier_laft), mean(Brier_aaft), mean(Brier_logistic)))
+print(df_Brier)
+```
+```{r Brier score 2}
+### cross-validated Brier score
+# cross validated c-index and Brier's score for each model
+## introduce variables in the cross validation
+set.seed(916) 
+n_folds <- 10 # number of folds
+### variables that store the c-index and Brier's score in each calculation
+Brier_faft <- Brier_faft2 <- Brier_laft <- Brier_aaft <- Brier_lfcm <- Brier_afcm <- Brier_logistic <- rep(0, n_folds)
+### use "createFolds" function from "caret" package to divide real data into n_folds folds
+fold <- createFolds(df_post2_r$time_since_use, k = n_folds, list = FALSE)
+tgrid <- seq(0, 120, len = 500) 
+
+## run cross validation
+for(k in 1:n_folds){
+    ## split train and test data
+    train_data <- df_post2_r[-which(fold == k),]
+    test_data <- df_post2_r[which(fold == k),]
+    
+    train_data$X_mat <- as.matrix(train_data[, grep("^pct_chg_", colnames(train_data))])
+    test_data$X_mat <- as.matrix(test_data[, grep("^pct_chg_", colnames(test_data))])
+    
+    # preprocess the test_data
+    n <- nrow(test_data)
+    nS <- length(sgrid2)
+
+    # set up the exposure & response
+    X <- as.matrix(test_data[, grep("^pct_chg_", colnames(test_data))])
+    delta <- test_data$is_user
+    Y <- test_data$time_since_use
+    logY <- cbind(log(Y), log(Y))
+    logY[delta == 0, 2] <- Inf # right censoring
+  
+    # set up data structure for mgcv fitting
+    lvec <- matrix(1 / nS, nS, 1) # quadrature weights for Riemann integration
+    L <- kronecker(matrix(1, n, 1), t(lvec)) # matrix containing quadrature weights for all participants
+    S <- kronecker(matrix(1, n, 1), t(sgrid2)) # matrix containing functional domain values
+  
+    # data for modelling
+    test_data2 <- data.frame(Y = Y,
+                      delta = delta,
+                      X = I(X),
+                      L = I(L),
+                      X_L = I(X * L),
+                      S = I(S),
+                      logY = I(logY),
+                      age_in_years = test_data$age_in_years,
+                      bmi = test_data$bmi)
+    
+    ## survival time and status
+    time_test   <- test_data$time_since_use
+    event_test <- test_data$is_user
+    time_train   <- train_data$time_since_use
+    event_train <- train_data$is_user
+    
+    ## fit each model using train data
+    fit_faft <- fit_mgcv(data = train_data, family = "lognormal", sgrid = sgrid2, visit = "post2")[[1]]
+    fit_faft2 <- fit_mgcv(data = train_data, family = "loglogistic", sgrid = sgrid2, visit = "post2")[[1]]
+    fit_laft <- fit_mgcv(data = train_data, family = "LAFT", sgrid = sgrid2, visit = "post2")[[1]]
+    fit_aaft <- fit_mgcv(data = train_data, family = "AAFT", sgrid = sgrid2, visit = "post2")[[1]]
+    # fit_lfcm <- fit_mgcv(data = train_data, family = "LFCM", sgrid = sgrid)[[1]]
+    # fit_afcm <- fit_mgcv(data = train_data, family = "AFCM", sgrid = sgrid)[[1]]
+    fit_logistic = pfr(is_user_120 ~ age_in_years + bmi + lf(X_mat, argvals = sgrid2), 
+                    family = binomial(), method = "REML", data = train_data)
+    
+    ## obtain linear predictors
+    eta_faft <- as.numeric(predict_AFT(fit_faft, test_data2))
+    eta_faft2 <- as.numeric(predict_AFT(fit_faft2, test_data2))
+    eta_laft <- predict(fit_laft, test_data2, type = "link")
+    eta_aaft <- predict(fit_aaft, test_data2, type = "link")
+    # eta_lfcm <- predict(fit_lfcm, test_data2, type = "link")
+    # eta_afcm <- predict(fit_afcm, test_data2, type = "link")
+    eta_logistic <- predict(fit_logistic, newdata = test_data, type = "response")
+    
+    ## calculate the cross-validated c-index
+    # cindex_laft[k] <- cal_c(marker = -eta_laft, Stime = time_test, status = event_test)
+    # cindex_aaft[k] <- cal_c(marker = -eta_aaft, Stime = time_test, status = event_test)
+    # cindex_lfcm[k] <- cal_c(marker = eta_lfcm, Stime = time_test, status = event_test)
+    # cindex_afcm[k] <- cal_c(marker = eta_afcm, Stime = time_test, status = event_test)
+    # cindex_logistic[k] <- cal_c(marker = eta_logistic, Stime = time_test, status = event_test)
+
+    ## calculate the cross-validated brier score
+    scale_faft <- fit_faft$b_hat
+    S_faft <- outer(eta_faft, tgrid, 
+                    function(eta_faft_i, tgrid_j) pnorm((log(tgrid_j) - eta_faft_i) / scale_faft, lower.tail = FALSE))
+    scale_faft2 <- fit_faft2$b_hat
+    S_faft2 <- outer(eta_faft2, tgrid, 
+                    function(eta_faft2_i, tgrid_j) pnorm((log(tgrid_j) - eta_faft2_i) / scale_faft2, lower.tail = FALSE))
+    S_laft <- cal_stime(fit = fit_laft, data = test_data2, tgrid = tgrid, family = 'lognormal')
+    S_aaft <- cal_stime(fit = fit_aaft, data = test_data2, tgrid = tgrid, family = 'lognormal')
+    # S_lfcm <- cal_stime(fit = fit_lfcm, data = test_data2, tgrid = tgrid, family = 'cox.ph')
+    # S_afcm <- cal_stime(fit = fit_afcm, data = test_data2, tgrid = tgrid, family = 'cox.ph')
+    
+    Brier_faft[k] <- cal_Brier(S_faft, Stime = time_test, status = event_test, tgrid = tgrid)
+    Brier_faft2[k] <- cal_Brier(S_faft2, Stime = time_test, status = event_test, tgrid = tgrid)
+    Brier_laft[k] <- cal_Brier(S_laft, Stime = time_test, status = event_test, tgrid = tgrid)
+    Brier_aaft[k] <- cal_Brier(S_aaft, Stime = time_test, status = event_test, tgrid = tgrid)
+    # Brier_lfcm[k] <- cal_Brier(S_lfcm, Stime = time_test, status = event_test, tgrid = tgrid)
+    # Brier_afcm[k] <- cal_Brier(S_afcm, Stime = time_test, status = event_test, tgrid = tgrid)
+    
+    # Brier score for functional logistic regression
+    pred_p <- predict(fit_logistic, newdata = test_data, type = "response")
+    Brier_logistic[k] <- mean((pred_p - test_data$is_user)^2)
+    
+}
+
+df_Brier <- data.frame(Model = c("loglogistic lfAFT", "lognormal lfAFT", "mgcv lfAFT", "mgcv afAFT", "Functional Logistic"),
+                       Brier_score = c(mean(Brier_faft2), mean(Brier_faft), mean(Brier_laft), mean(Brier_aaft), mean(Brier_logistic)))
 print(df_Brier)
 ```
 

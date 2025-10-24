@@ -76,11 +76,11 @@ table_Brier <- all_info %>%
   mutate(est_model = case_when(
             str_detect(type, "cox") ~ "LFCM",
             str_detect(type, "fttm") ~ "FTTM",
-            # str_detect(type, "norm") ~ "lognormal lfAFT",
+            # str_detect(type, "norm") ~ "mgcv lfAFT",
             str_detect(type, "faft2") ~ "loglogistic lfAFT",
             .default = "lognormal lfAFT"),
          est_model = factor(est_model, 
-                            levels = c("loglogistic lfAFT", "lognormal lfAFT", "LFCM", "FTTM")),
+                            levels = c("lognormal lfAFT", "loglogistic lfAFT", "LFCM", "FTTM")),
          family = recode(family, "cox.ph" = "CoxPH"),
          log_value = log(value))
 
@@ -140,7 +140,7 @@ table_mise_coef <- all_coef %>%
                                str_detect(type, "faft2") ~ "loglogistic lfAFT",
                                .default = "lognormal lfAFT"),
          est_model = factor(est_model, 
-                            levels = c("loglogistic lfAFT", "lognormal lfAFT", "LFCM", "FTTM")),
+                            levels = c("lognormal lfAFT", "loglogistic lfAFT", "LFCM", "FTTM")),
          family = recode(family, "cox.ph" = "CoxPH"),
          log_value = log(value))
 
@@ -193,7 +193,7 @@ table_mise_surv <- all_surv %>%
                                str_detect(type, "faft2") ~ "loglogistic lfAFT",
                                .default = "lognormal lfAFT"),
          est_model = factor(est_model, 
-                            levels = c("loglogistic lfAFT", "lognormal lfAFT", "LFCM", "FTTM")),
+                            levels = c("lognormal lfAFT", "loglogistic lfAFT", "LFCM", "FTTM")),
          family = recode(family, "cox.ph" = "CoxPH"),
          log_value = log(value))
 
@@ -204,13 +204,13 @@ plot_mise_surv <- table_mise_surv %>%
   scale_fill_manual(values = my_colors) +
   facet_grid(family~n, labeller = labeller(n = label_both, family = label_value), scales = "free") +
   labs(x = "Density of grid (p)", y = "log MISE of survival function", fill = "Model"
-       ) +
-  theme(
-    strip.text.y = element_blank(),  
-    strip.background.y = element_blank()
-  )
+       ) 
+  # theme(
+  #   strip.text.y = element_blank(),  
+  #   strip.background.y = element_blank()
+  # )
 
-plot_mise <- plot_mise_coef + plot_mise_surv + plot_Brier +
+plot_mise <- plot_mise_coef + plot_mise_surv +
   plot_layout(guides = 'collect', axes = 'collect')
 
 ggsave(file.path(fig_dir, "fig_sim_linear.jpeg"), plot_mise, width = 9, height = 4, dpi = 500)

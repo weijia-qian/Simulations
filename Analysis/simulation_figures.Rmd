@@ -1,0 +1,158 @@
+---
+title: "Simulation Figures"
+author: "Weijia Qian"
+date: '`r format(Sys.time(), "%Y-%m-%d")`'
+output:
+  html_document: 
+    code_folding: hide
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, repr.plot.width = 12, repr.plot.height = 8)
+library(tidyverse)
+library(patchwork)
+
+theme_set(theme_minimal() + theme(legend.position = "bottom"))
+
+# Define a custom color palette for the methods
+my_colors <- c(
+  "FTTM" = "#440154",
+  "LFCM" = "#2A788E",
+  "loglogistic lfAFT" = "#7AD151",
+  "lfAFT" = "#FDE725",
+  "AFCM" = "#E03C8A",
+  "afAFT" = "#B481BB"
+)
+
+# save(plot_additive, plot_additive_Brier, plot_additive_surv,
+#      plot_fttm, plot_fttm_Brier, plot_fttm_coef, plot_fttm_surv,
+#      plot_linear, plot_linear_Brier, plot_linear_coef, plot_linear_surv,
+#      file = "simulation_figures.rda")
+
+load(file = "simulation_figures.rda")
+```
+
+# Simulations comparing with FTTM
+```{r}
+# plot_fttm_Brier <- table_Brier %>%
+#   ggplot(aes(factor(nS), log_value, fill = est_model)) + 
+#   geom_boxplot(outliers = FALSE, fatten = 1.3) +
+#   scale_fill_manual(values = my_colors) +
+#   facet_grid(~family, labeller = label_value, scales = "free") +
+#   labs(y = "log Brier score", fill = "Model") +
+#   theme(axis.title.x = element_blank(), axis.text.x = element_blank(),
+#         axis.text = element_text(size = 10),
+#         legend.title = element_text(size = 12),
+#         legend.text = element_text(size = 12),
+#         strip.text.x = element_blank(),  
+#         strip.background.x = element_blank()
+#         )
+# 
+# plot_fttm_coef <- table_mise_coef %>%
+#   ggplot(aes(factor(nS), log_value, fill = est_model)) + 
+#   geom_boxplot(outliers = FALSE, fatten = 1.3) +
+#   scale_fill_manual(values = my_colors) +
+#   facet_grid(~family, labeller = label_value, scales = "free") +
+#   labs(y = expression("log MISE of"~beta(s)), fill = "Model") + 
+#   theme(axis.title.x = element_blank(), axis.text.x = element_blank(),
+#         axis.text = element_text(size = 10),
+#         legend.title = element_text(size = 12),
+#         legend.text = element_text(size = 12),
+#         strip.text.x = element_text(size = 12),
+#         strip.text.y = element_blank(),
+#         strip.background.y = element_blank()
+#         )
+# 
+# plot_fttm_surv <- table_mise_surv %>%
+#   ggplot(aes(factor(nS), log_value, fill = est_model)) + 
+#   geom_boxplot(outliers = FALSE, fatten = 1.3) +
+#   scale_fill_manual(values = my_colors) +
+#   facet_grid(col = vars(family), labeller = label_value, scales = "free") +
+#   labs(y = "log MISE of survival function", fill = "Model") + 
+#   theme(axis.title.x = element_blank(), axis.text.x = element_blank(),
+#         axis.text = element_text(size = 10),
+#         legend.title = element_text(size = 12),
+#         legend.text = element_text(size = 12),
+#         strip.text.x = element_blank(),
+#         strip.background.x = element_blank()
+#         )
+
+plot_fttm <- plot_fttm_coef / plot_fttm_surv / plot_fttm_Brier +
+  plot_layout(guides = 'collect', axis = 'collect')
+plot_fttm
+ggsave(file.path(fig_dir, "fig_fttm.jpeg"), plot_fttm, width = 8, height = 6, dpi = 500)
+```
+
+# Simulations (linear scenarios)
+```{r}
+# plot_linear_Brier <- table_Brier %>%
+#   ggplot(aes(factor(nS), value, fill = est_model)) + 
+#   geom_boxplot(outliers = FALSE, fatten = 1.3) +
+#   scale_fill_manual(values = my_colors) +
+#   facet_grid(family~n, labeller = labeller(n = label_both, family = label_value), scales = "free") +
+#   labs(x = "Density of grid (p)", y = "Out-of-sample Brier score", fill = "Model")
+
+# plot_linear_coef <- table_mise_coef %>%
+#   ggplot(aes(factor(nS), log_value, fill = est_model)) + 
+#   geom_boxplot(outliers = FALSE, fatten = 1.3) +
+#   scale_fill_manual(values = my_colors) +
+#   facet_grid(family~n, labeller = labeller(n = label_both, family = label_value), scales = "free") +
+#   labs(x = "Density of grid (p)", y = expression("log MISE of"~beta(s)), fill = "Model") +
+#   theme(
+#     strip.text.y = element_blank(),  
+#     strip.background.y = element_blank()
+#   )
+# 
+# plot_linear_surv <- table_mise_surv %>%
+#   ggplot(aes(factor(nS), log_value, fill = est_model)) + 
+#   geom_boxplot(outliers = FALSE, fatten = 1.3) +
+#   scale_fill_manual(values = my_colors) +
+#   facet_grid(family~n, labeller = labeller(n = label_both, family = label_value), scales = "free") +
+#   labs(x = "Density of grid (p)", y = "log MISE of survival function", fill = "Model")
+
+plot_linear <- plot_linear_coef + plot_linear_surv +
+  plot_layout(guides = 'collect', axes = 'collect')
+plot_linear
+plot_linear_Brier
+ggsave(file.path(fig_dir, "fig_sim_linear.jpeg"), plot_linear, width = 9, height = 4, dpi = 500)
+```
+
+
+# Simulations (additive scenarios)
+```{r}
+# plot_additive_Brier <- table_Brier %>%
+#   ggplot(aes(factor(nS), value, fill = est_model)) + 
+#   geom_boxplot(outliers = FALSE, fatten = 1.3) +
+#   scale_fill_manual(values = my_colors) +
+#   facet_grid(family~n, labeller = labeller(n = label_both, family = label_value), scales = "free") +
+#   labs(x = "", y = "out-of-sample Brier score", fill = "Model"
+#        ) +
+#   theme(
+#     axis.title.x=element_blank(),
+#     axis.text.x = element_blank(),
+#     axis.ticks.x = element_blank(),
+#     strip.text.y = element_blank(),  
+#     strip.background.y = element_blank()
+#   )
+
+# plot_additive_surv <- table_surv %>%
+#   ggplot(aes(factor(nS), log_value, fill = est_model)) + 
+#   geom_boxplot(outliers = FALSE, fatten = 1.3) +
+#   scale_fill_manual(values = my_colors) +
+#   facet_grid(family~n, labeller = labeller(n = label_both, family = label_value), scales = "free") +
+#   labs(x = "", y = "log MISE of survival function", fill = "Model"
+#        ) +
+#   theme(
+#     axis.title.x=element_blank(),
+#     axis.text.x = element_blank(),
+#     axis.ticks.x = element_blank()
+#   )
+
+plot_additive <- plot_additive_Brier + plot_additive_surv +
+  plot_layout(guides = 'collect', axes = "collect")
+plot_additive
+# ggsave(file.path(fig_dir, "fig_sim_additive.jpeg"), plot_additive, width = 8, height = 4, dpi = 500)
+```
+

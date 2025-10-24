@@ -1,0 +1,159 @@
+---
+title: "Data Analysis"
+author: "Weijia Qian"
+date: '`r format(Sys.time(), "%Y-%m-%d")`'
+output:
+  html_document: 
+    code_folding: hide
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+suppressPackageStartupMessages(library(caret))
+suppressPackageStartupMessages(library(cowplot))
+suppressPackageStartupMessages(library(tidyverse))
+suppressPackageStartupMessages(library(patchwork))
+
+theme_set(theme_minimal() + 
+            theme(legend.position = "bottom",
+                  # axis.text = element_text(size = 15),
+                  # axis.title = element_text(size = 15),
+                  # legend.title = element_text(size = 15),
+                  # legend.text = element_text(size = 15)
+                  ))
+my_colors <- c(
+  "FTTM" = "#440154",
+  # "mgcv LFCM" = "#414487",
+  "LFCM" = "#2A788E",
+  "loglogistic lfAFT" = "#7AD151",
+  "lognormal lfAFT" = "#FDE725",
+  "AFCM" = "#E03C8A",
+  "lognormal afAFT" = "#B481BB",
+  "functional logistic" = "#2EA9DF"
+)
+
+# load data
+load(file = "models.rda")
+```
+
+```{r linear models}
+### estimated coefficient function
+# assessment 1
+plot_coef1 <- data.frame(time = fit1.faft$s_grid, # lognormal lfAFT
+                         coef_faft = fit1.faft$beta1_hat,
+                         coef_faft_lb = fit1.faft$beta1_boot_ci_lower,
+                         coef_faft_ub = fit1.faft$beta1_boot_ci_upper,
+                         coef_faft2 = fit1.faft2$beta1_hat, # loglogistic lfAFT
+                         coef_faft2_lb = fit1.faft2$beta1_boot_ci_lower,
+                         coef_faft2_ub = fit1.faft2$beta1_boot_ci_upper
+                        )
+
+# assessment 2
+plot_coef2 <- data.frame(time = fit2.faft$s_grid,
+                        coef_faft = fit2.faft$beta1_hat,
+                        coef_faft_lb = fit2.faft$beta1_boot_ci_lower,
+                        coef_faft_ub = fit2.faft$beta1_boot_ci_upper,
+                        coef_faft2 = fit2.faft2$beta1_hat,
+                        coef_faft2_lb = fit2.faft2$beta1_boot_ci_lower,
+                        coef_faft2_ub = fit2.faft2$beta1_boot_ci_upper
+                        )
+  
+p_coef1 <- ggplot(data = plot_coef1, aes(x = time)) +
+    geom_line(aes(y = coef_faft, color = "lognormal lfAFT"), size = 1) +
+    geom_line(aes(y = coef_faft2, color = "loglogistic lfAFT"), size = 1) +
+    geom_ribbon(aes(ymin = coef_faft_lb, ymax = coef_faft_ub, fill = "lognormal lfAFT"), alpha = 0.3) +
+    geom_ribbon(aes(ymin = coef_faft2_lb, ymax = coef_faft2_ub, fill = "loglogistic lfAFT"), alpha = 0.3) +
+    scale_color_manual(values = my_colors,
+                       breaks = c("lognormal lfAFT", "loglogistic lfAFT")) +
+    scale_fill_manual(values = my_colors,
+                       breaks = c("lognormal lfAFT", "loglogistic lfAFT")) +
+    ylim(-0.25, 0.2) +
+    labs(
+      x = NULL,
+      y = expression(beta~"(s)"),
+      title = "Assessment 1",
+      color = "Model",
+      fill = "Model"
+    )
+
+p_coef2 <- ggplot(data = plot_coef2, aes(x = time)) +
+    geom_line(aes(y = coef_faft, color = "lognormal lfAFT"), size = 1) +
+    geom_line(aes(y = coef_faft2, color = "loglogistic lfAFT"), size = 1) +
+    geom_ribbon(aes(ymin = coef_faft_lb, ymax = coef_faft_ub, fill = "lognormal lfAFT"), alpha = 0.3) +
+    geom_ribbon(aes(ymin = coef_faft2_lb, ymax = coef_faft2_ub, fill = "loglogistic lfAFT"), alpha = 0.3) +
+    scale_color_manual(values = my_colors,
+                       breaks = c("lognormal lfAFT", "loglogistic lfAFT")) +
+    scale_fill_manual(values = my_colors,
+                       breaks = c("lognormal lfAFT", "loglogistic lfAFT")) +
+    ylim(-0.25, 0.2) +
+    labs(
+      x = NULL,
+      y = expression(beta~"(s)"),
+      title = "Assessment 2",
+      color = "Model",
+      fill = "Model"
+    )
+
+p_coef <- p_coef1 + p_coef2 +
+  plot_layout(guides = 'collect', axes = "collect")
+
+# get legend
+leg <- cowplot::get_legend(p_coef + theme(legend.position = "top"))
+
+p_coef <- p_coef1 + p_coef2 +
+  plot_layout(guides = 'collect', axes = "collect") &
+  theme(
+    legend.position = "none"
+  )
+
+```
+
+```{r additive models}
+# estimated coefficient surface
+# common_limits <- range(c(df_contour$fit_aaft, df_contour2$fit_aaft2), na.rm = TRUE)
+common_limits <- c(-30, 30)
+# assessment 1
+p_aaft1 <- ggplot(df_pred1_aaft, aes(x = S, y = X, fill = fit)) +
+  geom_raster(interpolate = TRUE) +
+  labs(
+    x = "Seconds since light stimulus (s)",
+    y = "Percent change in pupil size (x)",
+    fill = "F(s, x)"
+  ) +
+  scale_fill_distiller(
+    palette = "RdBu",
+    limits = common_limits
+  ) +
+  guides(fill = guide_colorbar(
+    barwidth = unit(8, "cm"), barheight = unit(0.5, "cm")
+  ))
+
+# assessment 2
+p_aaft2 <- ggplot(df_pred2_aaft, aes(x = S, y = X, fill = fit)) +
+  geom_raster(interpolate = TRUE) +
+  labs(
+    x = "Seconds since light stimulus (s)",
+    y = "Percent change in pupil size (x)",
+    fill = "F(s, x)"
+  ) +
+  scale_fill_distiller(
+    palette = "RdBu",
+    limits = common_limits
+  ) +
+  theme_minimal() +
+  guides(fill = guide_colorbar(
+    barwidth = unit(8, "cm"), barheight = unit(0.5, "cm")
+  ))
+
+p_surface <- p_aaft1 + p_aaft2 +
+  plot_layout(guides = 'collect', axes = "collect") &
+  theme(legend.position = "bottom")
+
+p_comb <- plot_grid(leg,  p_coef / p_surface, ncol = 1, rel_heights = c(0.1, 1))
+p_comb
+# ggsave(file.path(fig_dir, "fig_data_coef.jpeg"), p_comb, width = 8, height = 6, dpi = 500)
+```
+

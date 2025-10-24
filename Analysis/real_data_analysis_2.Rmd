@@ -639,6 +639,7 @@ n_folds <- 10 # number of folds
 Brier_faft <- Brier_faft2 <- Brier_laft <- Brier_aaft <- Brier_lfcm <- Brier_afcm <- Brier_logistic <- rep(0, n_folds)
 ### use "createFolds" function from "caret" package to divide real data into n_folds folds
 fold <- createFolds(df_post2_r$time_since_use, k = n_folds, list = FALSE)
+tgrid <- seq(0, 120, len = 500) 
 
 ## run cross validation
 for(k in 1:n_folds){
@@ -687,8 +688,8 @@ for(k in 1:n_folds){
     fit_faft2 <- fit_mgcv(data = train_data, family = "loglogistic", sgrid = sgrid)[[1]]
     fit_laft <- fit_mgcv(data = train_data, family = "LAFT", sgrid = sgrid)[[1]]
     fit_aaft <- fit_mgcv(data = train_data, family = "AAFT", sgrid = sgrid)[[1]]
-    fit_lfcm <- fit_mgcv(data = train_data, family = "LFCM", sgrid = sgrid)[[1]]
-    fit_afcm <- fit_mgcv(data = train_data, family = "AFCM", sgrid = sgrid)[[1]]
+    # fit_lfcm <- fit_mgcv(data = train_data, family = "LFCM", sgrid = sgrid)[[1]]
+    # fit_afcm <- fit_mgcv(data = train_data, family = "AFCM", sgrid = sgrid)[[1]]
     fit_logistic = pfr(is_user ~ age_in_years + bmi + lf(X_mat, argvals = sgrid), 
                     family = binomial(), method = "REML", data = train_data)
     
@@ -697,9 +698,9 @@ for(k in 1:n_folds){
     eta_faft2 <- as.numeric(predict_AFT(fit_faft2, test_data2))
     eta_laft <- predict(fit_laft, test_data2, type = "link")
     eta_aaft <- predict(fit_aaft, test_data2, type = "link")
-    eta_lfcm <- predict(fit_lfcm, test_data2, type = "link")
-    eta_afcm <- predict(fit_afcm, test_data2, type = "link")
-    eta_logistic <- predict(fit1.logistic, newdata = df_post2_r, type = "response")
+    # eta_lfcm <- predict(fit_lfcm, test_data2, type = "link")
+    # eta_afcm <- predict(fit_afcm, test_data2, type = "link")
+    eta_logistic <- predict(fit2.logistic, newdata = df_post2_r, type = "response")
 
     ## calculate the cross-validated brier score
     scale_faft <- fit_faft$b_hat
@@ -710,25 +711,24 @@ for(k in 1:n_folds){
                     function(eta_faft2_i, tgrid_j) pnorm((log(tgrid_j) - eta_faft2_i) / scale_faft2, lower.tail = FALSE))
     S_laft <- cal_stime(fit = fit_laft, data = test_data2, tgrid = tgrid, family = 'lognormal')
     S_aaft <- cal_stime(fit = fit_aaft, data = test_data2, tgrid = tgrid, family = 'lognormal')
-    S_lfcm <- cal_stime(fit = fit_lfcm, data = test_data2, tgrid = tgrid, family = 'cox.ph')
-    S_afcm <- cal_stime(fit = fit_afcm, data = test_data2, tgrid = tgrid, family = 'cox.ph')
+    # S_lfcm <- cal_stime(fit = fit_lfcm, data = test_data2, tgrid = tgrid, family = 'cox.ph')
+    # S_afcm <- cal_stime(fit = fit_afcm, data = test_data2, tgrid = tgrid, family = 'cox.ph')
     
     Brier_faft[k] <- cal_Brier(S_faft, Stime = time_test, status = event_test, tgrid = tgrid)
     Brier_faft2[k] <- cal_Brier(S_faft2, Stime = time_test, status = event_test, tgrid = tgrid)
     Brier_laft[k] <- cal_Brier(S_laft, Stime = time_test, status = event_test, tgrid = tgrid)
     Brier_aaft[k] <- cal_Brier(S_aaft, Stime = time_test, status = event_test, tgrid = tgrid)
-    Brier_lfcm[k] <- cal_Brier(S_lfcm, Stime = time_test, status = event_test, tgrid = tgrid)
-    Brier_afcm[k] <- cal_Brier(S_afcm, Stime = time_test, status = event_test, tgrid = tgrid)
+    # Brier_lfcm[k] <- cal_Brier(S_lfcm, Stime = time_test, status = event_test, tgrid = tgrid)
+    # Brier_afcm[k] <- cal_Brier(S_afcm, Stime = time_test, status = event_test, tgrid = tgrid)
     
     # Brier score for functional logistic regression
-    pred_p <- predict(fit_logistic, newdata = test_data, type = "response")
+    pred_p <- predict(fit2.logistic, newdata = test_data, type = "response")
     Brier_logistic[k] <- mean((pred_p - test_data$is_user)^2)
     
 }
 
-df_Brier <- data.frame(Model = c("loglogistic lfAFT", "lognormal lfAFT", "mgcv lfAFT", "mgcv afAFT", "mgcv LFCM", "mgcv AFCM", "Functional Logistic"),
-                       Brier_score = c(mean(Brier_faft2), mean(Brier_faft), mean(Brier_laft), mean(Brier_aaft), 
-                                       mean(Brier_lfcm), mean(Brier_afcm), mean(Brier_logistic)))
+df_Brier <- data.frame(Model = c("loglogistic lfAFT", "lognormal lfAFT", "mgcv lfAFT", "mgcv afAFT",  "Functional Logistic"),
+                       Brier_score = c(mean(Brier_faft2), mean(Brier_faft), mean(Brier_laft), mean(Brier_aaft),  mean(Brier_logistic)))
 print(df_Brier)
 ```
 

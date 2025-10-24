@@ -40,8 +40,8 @@ my_colors <- c(
   "lognormal lfAFT" = "#FDE725"
 )
 
-folder_path <- "/Users/weijia/Research/FDA/Simulations/Output/20250822_fttm"
-# folder_path <- "/Users/weijia/Research/FDA/Simulations/Output/20250716_fttm"
+# folder_path <- "/Users/weijia/Research/FDA/Simulations/Output/20250822_fttm"
+folder_path <- "/Users/weijia/Research/FDA/Simulations/Output/20251021_fttm"
 rda_files <- list.files(path = folder_path, pattern = "\\.RDA$", full.names = TRUE)
 all_results <- list()
 for (i in 1:length(rda_files)) {
@@ -99,17 +99,17 @@ table_time <- all_info %>%
 ```{r}
 # box plot
 table_Brier <- all_info %>%
-  pivot_longer(cols = c("Brier_norm", "Brier_cox", "Brier_faft2", "Brier_fttm"),
+  pivot_longer(cols = c("Brier_faft", "Brier_cox", "Brier_faft2", "Brier_fttm"),
                names_to = "type",
                values_to = "value") %>%
   mutate(est_model = case_when(
             str_detect(type, "cox") ~ "LFCM",
             str_detect(type, "fttm") ~ "FTTM",
-            str_detect(type, "norm") ~ "lognormal lfAFT",
+            # str_detect(type, "norm") ~ "lognormal lfAFT",
             str_detect(type, "faft2") ~ "loglogistic lfAFT",
             .default = "lognormal lfAFT"),
          est_model = factor(est_model, 
-                            levels = c("loglogistic lfAFT", "lognormal lfAFT", "LFCM", "FTTM")),
+                            levels = c("lognormal lfAFT", "loglogistic lfAFT", "LFCM", "FTTM")),
          family = recode(family, "cox.ph" = "CoxPH"),
          log_value = log(value))
 
@@ -168,16 +168,16 @@ for (scenario in all_results) {
 
 # boxplot
 table_mise_coef <- all_coef %>%
-  pivot_longer(cols = c("mise_coef_norm", "mise_coef_cox", "mise_coef_faft2", "mise_coef_fttm"),
+  pivot_longer(cols = c("mise_coef_faft", "mise_coef_cox", "mise_coef_faft2", "mise_coef_fttm"),
                names_to = "type",
                values_to = "value") %>%
   mutate(est_model = case_when(str_detect(type, "cox") ~ "LFCM",
                                str_detect(type, "fttm") ~ "FTTM",
-                               str_detect(type, "norm") ~ "lognormal lfAFT",
+                               # str_detect(type, "norm") ~ "lognormal lfAFT",
                                str_detect(type, "faft2") ~ "loglogistic lfAFT",
                                .default = "lognormal lfAFT"),
          est_model = factor(est_model, 
-                            levels = c("loglogistic lfAFT", "lognormal lfAFT", "LFCM", "FTTM")),
+                            levels = c("lognormal lfAFT", "loglogistic lfAFT", "LFCM", "FTTM")),
          family = recode(family, "cox.ph" = "CoxPH"),
          log_value = log(value))
 
@@ -226,16 +226,16 @@ for (scenario in all_results) {
 
 # boxplot
 table_mise_surv <- all_surv %>%
-  pivot_longer(cols = c("mise_surv_norm", "mise_surv_cox", "mise_surv_faft2", "mise_surv_fttm"),
+  pivot_longer(cols = c("mise_surv_faft", "mise_surv_cox", "mise_surv_faft2", "mise_surv_fttm"),
                names_to = "type",
                values_to = "value") %>%
   mutate(est_model = case_when(str_detect(type, "cox") ~ "LFCM",
                                str_detect(type, "fttm") ~ "FTTM",
-                               str_detect(type, "norm") ~ "lognormal lfAFT",
+                               # str_detect(type, "norm") ~ "lognormal lfAFT",
                                str_detect(type, "faft2") ~ "loglogistic lfAFT",
                                .default = "lognormal lfAFT"),
          est_model = factor(est_model, 
-                            levels = c("loglogistic lfAFT", "lognormal lfAFT", "LFCM", "FTTM")),
+                            levels = c("lognormal lfAFT", "loglogistic lfAFT", "LFCM", "FTTM")),
          family = recode(family, "cox.ph" = "CoxPH"),
          log_value = log(value))
 
@@ -259,7 +259,7 @@ plot_fttm <- plot_mise_coef / plot_mise_surv / plot_Brier +
   plot_layout(guides = 'collect', axis = 'collect')
 
 fig_dir <- "/Users/weijia/Research/FDA/Drafts"
-ggsave(file.path(fig_dir, "fig_fttm.jpeg"), plot_fttm, width = 8, height = 6, dpi = 500)
+ggsave(file.path(fig_dir, "fig_fttm_new.jpeg"), plot_fttm, width = 8, height = 6, dpi = 500)
 ```
 
 ### Plot Estimated Coefficient + CI + True Coefficient
