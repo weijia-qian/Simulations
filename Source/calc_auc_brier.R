@@ -51,6 +51,42 @@ cal_stime <- function(fit, data, tgrid = seq(0, 10, len = 1000), family = "cox.p
   return(S_i)
 }
 
+### function "cal_IPCW_IBS()" calculates IPCW integrated Brier score
+# Evaluates at observed event times in the test set.
+# Integration: trapezoidal rule for first interval, right Riemann sum thereafter,
+# normalized by max observed event time. Censoring distribution estimated by KM on training data.
+# Arguments:
+#   S_mat       : n_test x length(tgrid) survival probability matrix
+#   time_test   : observed times in test set
+#   event_test  : event indicators in test set (1 = event, 0 = censored)
+#   time_train  : observed times in training set (for KM censoring estimate)
+#   event_train : event indicators in training set
+#   tgrid       : time grid on which S_mat is evaluated (should start > 0)
+cal_IPCW_IBS <- function(S_mat, time_test, event_test, time_train, event_train, tgrid) {
+  n_test  <- length(time_test)
+  km_cens <- survfit(Surv(time_train, 1 - event_train) ~ 1)
+  get_G <- function(t_vals) {
+    sf     <- stepfun(km_cens$time, c(1, km_cens$surv))
+    G_vals <- sf(t_vals)
+    G_vals[G_vals == 0] <- min(km_cens$surv[km_cens$surv > 0], na.rm = TRUE)
+    G_vals
+  }
+  utimes <- sort(unique(time_test[event_test == 1]))
+  if (length(utimes) == 0) return(NA_real_)
+  Brier_t <- vapply(utimes, function(ti) {
+    col_idx <- max(which(tgrid <= ti))
+    S_ti    <- S_mat[, col_idx]
+    idx1    <- (time_test <= ti) & (event_test == 1)
+    idx2    <- time_test > ti
+    (sum(S_ti[idx1]^2 / get_G(time_test[idx1])) +
+       sum((1 - S_ti[idx2])^2 / get_G(ti))) / n_test
+  }, numeric(1))
+  iBrier <- 0.5 * utimes[1] * Brier_t[1]
+  if (length(utimes) > 1)
+    iBrier <- iBrier + sum(Brier_t[-1] * diff(utimes))
+  iBrier / max(utimes)
+}
+
 ### function "cal_Brier()" calculates Brier's score under right censored survival setting
 cal_Brier <- function(S, Stime, status, tgrid = seq(0, 10, len=1000)){
   # get unique ordered survival times

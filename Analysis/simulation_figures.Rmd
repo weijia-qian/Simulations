@@ -153,6 +153,6 @@ ggsave(file.path(fig_dir, "fig_sim_linear.jpeg"), plot_linear, width = 9, height
 plot_additive <- plot_additive_Brier + plot_additive_surv +
   plot_layout(guides = 'collect', axes = "collect")
 plot_additive
-# ggsave(file.path(fig_dir, "fig_sim_additive.jpeg"), plot_additive, width = 8, height = 4, dpi = 500)
+ggsave(file.path(fig_dir, "fig_sim_additive.jpeg"), plot_additive, width = 8, height = 4, dpi = 500)
 ```
 

@@ -15,6 +15,7 @@ suppressPackageStartupMessages(library(refund))
 suppressPackageStartupMessages(library(scam))
 suppressPackageStartupMessages(library(splines))
 suppressPackageStartupMessages(library(survival))
+suppressPackageStartupMessages(library(survAUC))
 suppressPackageStartupMessages(library(tictoc))
 suppressPackageStartupMessages(library(tidyverse))
 
@@ -160,17 +161,21 @@ for(iter in 1:N_iter){
   eta_faft2 <- predict_AFT(fit.faft2, sim_data_test$data)
   # eta_fttm <- predict_FTTM(fit.fttm, sim_data_test$data)
   
-  ## calculate c-index
-  # AUC_norm <- cal_c(marker = -eta_norm, Stime = time_test, status = event_test)
-  # AUC_cox <- cal_c(marker = eta_cox, Stime = time_test, status = event_test)
-  # AUC_faft <- cal_c(marker = -eta_faft, Stime = time_test, status = event_test)
-  # AUC_faft2 <- cal_c(marker = -eta_faft2, Stime = time_test, status = event_test)
-  # AUC_fttm <- cal_c(marker = -eta_fttm, Stime = time_test, status = event_test)
-  
-  ## calculate the brier score
+  ## Surv objects for UnoC (Uno's IPCW C-index, consistent with real_data_analysis.Rmd)
+  Surv_train <- Surv(time_train, event_train)
+  Surv_test  <- Surv(time_test,  event_test)
+
+  ## calculate C-index (Uno's IPCW; sign-flip so higher lpnew = higher risk)
+  Cindex_norm  <- UnoC(Surv_train, Surv_test, lpnew = -eta_norm)
+  Cindex_cox   <- UnoC(Surv_train, Surv_test, lpnew =  eta_cox)
+  Cindex_faft  <- UnoC(Surv_train, Surv_test, lpnew = -eta_faft)
+  Cindex_faft2 <- UnoC(Surv_train, Surv_test, lpnew = -eta_faft2)
+  # Cindex_fttm <- UnoC(Surv_train, Surv_test, lpnew = -eta_fttm)
+
+  ## calculate the IPCW Brier score (consistent with real_data_analysis.Rmd)
   tmax <- 120
   nS_pred <- 500
-  tgrid <- seq(0, tmax, len = nS_pred)
+  tgrid <- seq(0.1, tmax, len = nS_pred)  # start at 0.1 to avoid log(0) in AFT survival
   
   S_norm <- cal_stime(fit = fit.norm, data = sim_data_test$data, tgrid = tgrid, family = 'lognormal')
   # S_cox <- cal_stime(fit = fit.cox, data = sim_data_test$data, tgrid = tgrid, family = 'cox.ph')
@@ -188,10 +193,10 @@ for(iter in 1:N_iter){
   S_faft2 <- outer(eta_faft2, tgrid, 
                    function(eta_faft2_i, tgrid_j) 1 / (1 + exp((log(tgrid_j) - eta_faft2_i) / scale_faft2)))
   
-  Brier_norm <- cal_Brier(S_norm, Stime = time_test, status = event_test, tgrid)
-  Brier_cox <- cal_Brier(S_cox, Stime = time_test, status = event_test, tgrid)
-  Brier_faft <- cal_Brier(S_faft, Stime = time_test, status = event_test, tgrid)
-  Brier_faft2 <- cal_Brier(S_faft2, Stime = time_test, status = event_test, tgrid)
+  Brier_norm  <- cal_IPCW_IBS(S_norm,  time_test, event_test, time_train, event_train, tgrid)
+  Brier_cox   <- cal_IPCW_IBS(S_cox,   time_test, event_test, time_train, event_train, tgrid)
+  Brier_faft  <- cal_IPCW_IBS(S_faft,  time_test, event_test, time_train, event_train, tgrid)
+  Brier_faft2 <- cal_IPCW_IBS(S_faft2, time_test, event_test, time_train, event_train, tgrid)
   
   ###############################################################
   ## pointwise squared errors, pointwise CIs and CMA CIs for estimated beta
@@ -301,10 +306,12 @@ for(iter in 1:N_iter){
                         beta_type = beta_type,
                         b = b,
                         censor_rate = 1 - mean(sim_data$data$delta),
-                        # AUC_norm,
-                        # AUC_cox,
-                        # AUC_faft,
-                        # AUC_faft2,
+                        # C-index (Harrell's concordance, out-of-sample)
+                        Cindex_norm,
+                        Cindex_cox,
+                        Cindex_faft,
+                        Cindex_faft2,
+                        # IPCW integrated Brier score (out-of-sample)
                         Brier_norm,
                         Brier_cox,
                         Brier_faft,

@@ -41,7 +41,7 @@ my_colors <- c(
 )
 
 # folder_path <- "/Users/weijia/Research/FDA/Simulations/Output/20250822_fttm"
-folder_path <- "/Users/weijia/Research/FDA/Simulations/Output/20251021_fttm"
+folder_path <- "/Users/weijia/Research/FDA/Simulations/Output/20251024_fttm"
 rda_files <- list.files(path = folder_path, pattern = "\\.RDA$", full.names = TRUE)
 all_results <- list()
 for (i in 1:length(rda_files)) {

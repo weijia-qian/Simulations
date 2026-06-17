@@ -84,7 +84,7 @@ table_Brier <- all_info %>%
          family = recode(family, "cox.ph" = "CoxPH"),
          log_value = log(value))
 
-plot_Brier <- table_Brier %>%
+plot_linear_Brier <- table_Brier %>%
   filter(beta_type == "simple") %>%
   ggplot(aes(factor(nS), value, fill = est_model)) + 
   geom_boxplot(outliers = FALSE, fatten = 1.3) +
@@ -93,7 +93,7 @@ plot_Brier <- table_Brier %>%
   labs(x = "Density of grid (p)", y = "Out-of-sample Brier score", fill = "Model"
        )
 
-ggsave(file.path(fig_dir, "fig3.jpeg"), plot_Brier, width = 6, height = 4, dpi = 500)
+ggsave(file.path(fig_dir, "fig_sim_brier.jpeg"), plot_linear_Brier, width = 6, height = 4, dpi = 500)
 
 ```
 
@@ -144,7 +144,7 @@ table_mise_coef <- all_coef %>%
          family = recode(family, "cox.ph" = "CoxPH"),
          log_value = log(value))
 
-plot_mise_coef <- table_mise_coef %>%
+plot_linear_coef <- table_mise_coef %>%
   filter(beta_type == "simple") %>%
   ggplot(aes(factor(nS), log_value, fill = est_model)) + 
   geom_boxplot(outliers = FALSE, fatten = 1.3) +
@@ -197,7 +197,7 @@ table_mise_surv <- all_surv %>%
          family = recode(family, "cox.ph" = "CoxPH"),
          log_value = log(value))
 
-plot_mise_surv <- table_mise_surv %>%
+plot_linear_surv <- table_mise_surv %>%
   filter(beta_type == "simple") %>%
   ggplot(aes(factor(nS), log_value, fill = est_model)) + 
   geom_boxplot(outliers = FALSE, fatten = 1.3) +
@@ -210,10 +210,10 @@ plot_mise_surv <- table_mise_surv %>%
   #   strip.background.y = element_blank()
   # )
 
-plot_mise <- plot_mise_coef + plot_mise_surv +
+plot_linear <- plot_linear_coef + plot_linear_surv +
   plot_layout(guides = 'collect', axes = 'collect')
 
-ggsave(file.path(fig_dir, "fig_sim_linear.jpeg"), plot_mise, width = 9, height = 4, dpi = 500)
+ggsave(file.path(fig_dir, "fig_sim_linear.jpeg"), plot_linear, width = 9, height = 4, dpi = 500)
 ```
 
 ### Average Coverage Probability of Pointwise CIs for Coefficient Function

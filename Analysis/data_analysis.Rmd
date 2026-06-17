@@ -154,6 +154,6 @@ p_surface <- p_aaft1 + p_aaft2 +
 
 p_comb <- plot_grid(leg,  p_coef / p_surface, ncol = 1, rel_heights = c(0.1, 1))
 p_comb
-# ggsave(file.path(fig_dir, "fig_data_coef.jpeg"), p_comb, width = 8, height = 6, dpi = 500)
+ggsave(file.path(fig_dir, "fig_data_coef.jpeg"), p_comb, width = 8, height = 6, dpi = 500)
 ```
 

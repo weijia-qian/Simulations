@@ -43,14 +43,16 @@ my_colors <- c(
   "lognormal afAFT" = "#B481BB",
   "functional logistic" = "#2EA9DF"
 )
-fig_dir <- "/Users/weijia/Research/FDA/Drafts"
+fig_dir <- "/Users/weijia/Research/FDA/Biometrics revision"
 
 # load real data
 df_func <- readRDS(here("Data", "Phase3_Pupillometer_pctChg.rds")) 
 df_scalar <- readRDS(here("Data", "ccds2_scalars.rds")) 
 df <- df_scalar %>%
   distinct(ptid, .keep_all = TRUE) %>%
-  select(ptid, age_in_years, bmi) %>%
+  dplyr::select(ptid, age_in_years, gender, weight, height, bmi, hispanic,
+                education, employment, tobacco_freq, alcohol_consump,
+                alcohol_past30, alcohol_weekavg, alcohol_perday, PCTT, PCBlood, PMC, auc) %>%
   right_join(df_func, by = "ptid")
   
 # correlation plot of variables
@@ -67,8 +69,15 @@ df$is_user <- ifelse(df$use_group == "No Use", 0, 1)
 df$time_since_use <- ifelse(df$is_user == 1, df$mins_since_consump, 480)
 
 # transpose to wide format
+scalar_vars <- c("age_in_years", "gender", "weight", "height", "bmi", "hispanic",
+                 "education", "employment", "tobacco_freq", "alcohol_consump",
+                 "alcohol_past30", "alcohol_weekavg", "alcohol_perday", "PCTT", "PCBlood")
+# Keep only those actually present in df
+scalar_vars <- intersect(scalar_vars, colnames(df))
+
 df_wide <- df %>%
-  select(ptid, mtm, eye, trial_id, pupil_sm_pctChg, is_user, time_since_use, age_in_years, bmi) %>%
+  dplyr::select(ptid, mtm, eye, trial_id, pupil_sm_pctChg, is_user, time_since_use,
+                all_of(scalar_vars)) %>%
   group_by(trial_id) %>%
   mutate(frame = row_number()) %>%
   ungroup() %>%
@@ -76,7 +85,7 @@ df_wide <- df %>%
 
 # separate datasets for post1 & post2
 df_post1_r <- df_wide[df_wide$mtm == "1_Post1" & df_wide$eye == "Right", ]
-df_post1_r <- df_post1_r %>% select(-pct_chg_120) # data issue in the last frame
+df_post1_r <- df_post1_r %>% dplyr::select(-pct_chg_120) # data issue in the last frame
 df_post2_r <- df_wide[df_wide$mtm == "2_Post2" & df_wide$eye == "Right", ]
 #df_post1_l <- df_wide[df_wide$mtm == "1_Post1" & df_wide$eye == "Left", ]
 # setdiff(df_post2_r$ptid, df_post1_r$ptid)
@@ -92,26 +101,80 @@ sgrid2 <- unique(df$time)
 #plot(df_post1_r$pct_chg_120, xlab= "Subject")
 ```
 
-```{r}
-age_mean_user <- mean(df_post1_r[df_post1_r$is_user == 1,]$age_in_years, na.rm = TRUE)
-age_mean_nonuser <- mean(df_post1_r[df_post1_r$is_user == 0,]$age_in_years, na.rm = TRUE)
-bmi_mean_user <- median(df_post1_r[df_post1_r$is_user == 1,]$bmi, na.rm = TRUE)
-bmi_mean_nonuser <- median(df_post1_r[df_post1_r$is_user == 0,]$bmi, na.rm = TRUE)
-pupil_means_user <- t(as.matrix(colMeans(df_post1_r[df_post1_r$is_user == 1, -c(1:8)])[-120]))
-pupil_means_nonuser <- t(as.matrix(colMeans(df_post1_r[df_post1_r$is_user == 0, -c(1:8)])[-120]))
-df_pupil_means <- data.frame(time = seq(1:119),
-                             pupil_means_user = as.numeric(pupil_means_user),
-                             pupil_means_nonuser = as.numeric(pupil_means_nonuser))
+```{r covariates}
+# ── Scalar covariates — edit this vector to change the covariate set ──────────
+z_vars <- c("age_in_years", "bmi")
 
-age_mean_user2 <- mean(df_post2_r[df_post2_r$is_user == 1,]$age_in_years, na.rm = TRUE)
-age_mean_nonuser2 <- mean(df_post2_r[df_post2_r$is_user == 0,]$age_in_years, na.rm = TRUE)
-bmi_mean_user2 <- median(df_post2_r[df_post2_r$is_user == 1,]$bmi, na.rm = TRUE)
-bmi_mean_nonuser2 <- median(df_post2_r[df_post2_r$is_user == 0,]$bmi, na.rm = TRUE)
-pupil_means_user2 <- t(as.matrix(colMeans(df_post2_r[df_post2_r$is_user == 1, -c(1:8)])))
-pupil_means_nonuser2 <- t(as.matrix(colMeans(df_post2_r[df_post2_r$is_user == 0, -c(1:8)])))
-df_pupil_means2 <- data.frame(time = seq(1:120),
-                             pupil_means_user = as.numeric(pupil_means_user2),
-                             pupil_means_nonuser = as.numeric(pupil_means_nonuser2))
+# Encode character/factor variables in z_vars as numeric columns:
+#   - binary (2 levels)   → single 0/1 column, keeps original name
+#   - multi-level (k > 2) → k-1 treatment dummies (ref = first level
+#                            alphabetically), named <var><level>
+# Returns list(df = modified dataframe, z_vars = updated variable names).
+encode_z <- function(df, z_vars) {
+  out_vars <- character(0)
+  for (v in z_vars) {
+    x <- df[[v]]
+    if (is.numeric(x) || is.integer(x)) {
+      out_vars <- c(out_vars, v)
+    } else {
+      lvls <- sort(unique(na.omit(as.character(x))))
+      if (length(lvls) == 2) {
+        df[[v]] <- as.integer(factor(x, levels = lvls)) - 1L
+        out_vars <- c(out_vars, v)
+      } else {
+        # k-1 treatment-coded dummies; reference = lvls[1]
+        fac   <- factor(x, levels = lvls)
+        mm    <- model.matrix(~ fac)[, -1, drop = FALSE]
+        dnames <- paste0(v, lvls[-1])
+        colnames(mm) <- dnames
+        df    <- cbind(df, as.data.frame(mm))
+        out_vars <- c(out_vars, dnames)
+      }
+    }
+  }
+  list(df = df, z_vars = out_vars)
+}
+
+enc1       <- encode_z(df_post1_r, z_vars)  # encode both with original z_vars
+enc2       <- encode_z(df_post2_r, z_vars)
+df_post1_r <- enc1$df
+df_post2_r <- enc2$df
+z_vars     <- enc1$z_vars   # updated names (dummies replace factor columns)
+```
+
+```{r}
+# ── Pupil means by group ──────────────────────────────────────────────────────
+pct_cols1 <- grep("^pct_chg_", colnames(df_post1_r), value = TRUE)
+pct_cols2 <- grep("^pct_chg_", colnames(df_post2_r), value = TRUE)
+
+pupil_means_user    <- t(as.matrix(colMeans(df_post1_r[df_post1_r$is_user == 1, pct_cols1])))
+pupil_means_nonuser <- t(as.matrix(colMeans(df_post1_r[df_post1_r$is_user == 0, pct_cols1])))
+pupil_means_user2    <- t(as.matrix(colMeans(df_post2_r[df_post2_r$is_user == 1, pct_cols2])))
+pupil_means_nonuser2 <- t(as.matrix(colMeans(df_post2_r[df_post2_r$is_user == 0, pct_cols2])))
+
+df_pupil_means <- data.frame(time = seq_along(pct_cols1),
+                             pupil_means_user    = as.numeric(pupil_means_user),
+                             pupil_means_nonuser = as.numeric(pupil_means_nonuser))
+df_pupil_means2 <- data.frame(time = seq_along(pct_cols2),
+                              pupil_means_user    = as.numeric(pupil_means_user2),
+                              pupil_means_nonuser = as.numeric(pupil_means_nonuser2))
+
+# ── Representative covariate means for z_vars by group ───────────────────────
+# Returns a named numeric vector of means (or modes for binary-encoded vars).
+z_rep_vals <- function(df, z_vars, group) {
+  sub <- df[df$is_user == group, z_vars, drop = FALSE]
+  vapply(z_vars, function(v) mean(sub[[v]], na.rm = TRUE), numeric(1))
+}
+z_means1_user    <- z_rep_vals(df_post1_r, z_vars, 1)
+z_means1_nonuser <- z_rep_vals(df_post1_r, z_vars, 0)
+z_means2_user    <- z_rep_vals(df_post2_r, z_vars, 1)
+z_means2_nonuser <- z_rep_vals(df_post2_r, z_vars, 0)
+
+# Legacy scalar aliases (used in plotting code); update if z_vars changes
+age_mean_user     <- if ("age_in_years" %in% z_vars) z_means1_user["age_in_years"]    else NA
+age_mean_nonuser  <- if ("age_in_years" %in% z_vars) z_means1_nonuser["age_in_years"] else NA
+age_mean_user2    <- if ("age_in_years" %in% z_vars) z_means2_user["age_in_years"]    else NA
+age_mean_nonuser2 <- if ("age_in_years" %in% z_vars) z_means2_nonuser["age_in_years"] else NA
 ```
 
 ```{r, pupil response curves survival plot}
@@ -146,23 +209,26 @@ p_pupil <- ggplot(df_long) +
     color = ""
   ) +
   scale_color_manual(
-    values = c("Didn't smoke" = "#FF7043", "Smoked" = "#2E7D32")
+    values = c("Censored" = "#FF7043", "Smoked" = "#2E7D32")
+  ) +
+  theme(
+    legend.position = "top"
   )
 
 df_pupil_means$time <- sgrid1
 # Pupil plot for average user and nonuser
-p_pupil <- ggplot(df_long) +
-  geom_line(aes(x = time, y = pct_chg, group = ptid), color = "lightgray") +
-  geom_line(data = df_pupil_means, aes(x = time, y = pupil_means_nonuser, color = "Didn't smoke"), size = 0.8) +
-  geom_line(data = df_pupil_means, aes(x = time, y = pupil_means_user, color = "Smoked"), size = 0.8) +
-  labs(
-    x = "Time since light stimulus (seconds)",
-    y = "Percent change in pupil diameter",
-    color = ""
-  ) +
-  scale_color_manual(
-    values = c("Didn't smoke" = "#FF7043", "Smoked" = "#2E7D32")
-  )
+# p_pupil <- ggplot(df_long) +
+#   geom_line(aes(x = time, y = pct_chg, group = ptid), color = "lightgray") +
+#   geom_line(data = df_pupil_means, aes(x = time, y = pupil_means_nonuser, color = "Didn't smoke"), size = 0.8) +
+#   geom_line(data = df_pupil_means, aes(x = time, y = pupil_means_user, color = "Smoked"), size = 0.8) +
+#   labs(
+#     x = "Time since light stimulus (seconds)",
+#     y = "Percent change in pupil diameter",
+#     color = ""
+#   ) +
+#   scale_color_manual(
+#     values = c("Censored" = "#FF7043", "Smoked" = "#2E7D32")
+#   )
 
 # line plot for survival
 plot_survival <- df_post1_r %>%
@@ -188,11 +254,11 @@ p_survival <- ggplot(data = plot_survival, aes(x = event_time, y = id)) +
   scale_linetype_identity() +  # Use linetype directly from variable
   scale_color_manual(
     values = c("#FF7043", "#2E7D32"),
-    labels = c("Didn't smoke", "Smoked")
+    labels = c("Censored", "Smoked")
   ) +
   scale_shape_manual(
     values = c(17, 16),
-    labels = c("Didn't smoke", "Smoked")
+    labels = c("Censored", "Smoked")
   ) +
   labs(
     x = "Time since smoking (minutes)",
@@ -204,117 +270,203 @@ p_survival <- ggplot(data = plot_survival, aes(x = event_time, y = id)) +
     axis.text.y = element_blank()
   )
 
-p1 <- p_pupil + p_survival
-ggsave(file.path(fig_dir, "fig_curves_avg.jpeg"), p1, width = 8, height = 4, dpi = 500)
+# p1 <- p_survival + p_pupil
+# ggsave(file.path(fig_dir, "fig_curves.jpeg"), p1, width = 8, height = 4, dpi = 500)
+
+
+# Side-by-side plot of 75/480 min cutoffs
+library(ggbreak)
+
+# ggbreak puts the x-axis title below the entire aplot composition, which places
+# it beneath the legend when legend.position = "bottom". Fix: suppress the legend
+# inside the ggbreak plot and append it as a separate row using aplot::plot_list.
+p_survival_2 <- ggplot(data = plot_survival, aes(x = time_since_use, y = id)) +
+  geom_segment(aes(x = 0, xend = time_since_use, yend = id), color = "grey55", size = 1.2) +
+  geom_point(aes(color = factor(is_user), shape = factor(is_user)), size = 2.3) +
+  scale_color_manual(
+    values = c("#FF7043", "#2E7D32"),
+    labels = c("Censored", "Smoked")
+  ) +
+  scale_shape_manual(
+    values = c(17, 16),
+    labels = c("Censored", "Smoked")
+  ) +
+  scale_x_break(breaks = c(60, 450), scales = "fixed", symbol = "slash", space=.5) +
+  labs(
+    x = "Time since smoking (minutes)",
+    y = "Individual",
+    color = "",
+    shape = ""
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "top",   # legend moved to separate row below
+    axis.text.y = element_blank()
+  )
+
+# patchwork (+) strips ggbreak's aplot wrapper; use aplot::plot_list() instead
+p1 <- aplot::plot_list(p_survival_2, p_pupil, ncol = 2)
+ggsave(file.path(fig_dir, "fig_curves.jpeg"), p1, width = 8, height = 4, dpi = 500)
 ```
 
 ```{r}
-fit_mgcv <- function(data, family, sgrid, visit = "post1"){
+fit_mgcv <- function(data, family, sgrid, visit = "post1", compute_surv = TRUE,
+                     z_vars = get("z_vars", envir = .GlobalEnv),
+                     z_means_user = NULL, z_means_nonuser = NULL) {
+  # Handles LFCM and AFCM only. For functional AFT models use fit_lfAFT()/fit_afAFT().
+  # Set compute_surv = FALSE in CV loops (only [[1]] is needed) to skip the
+  # representative-subject survival computation.
   n <- nrow(data)
+  if (visit == "post1") { sgrid <- sgrid1 } else { sgrid <- sgrid2 }
   nS <- length(sgrid)
 
-  # set up the exposure & response
-  X <- as.matrix(data[, grep("^pct_chg_", colnames(data))])
+  X     <- as.matrix(data[, grep("^pct_chg_", colnames(data))])
   delta <- data$is_user
-  Y <- data$time_since_use
-  logY <- cbind(log(Y), log(Y))
-  logY[delta == 0, 2] <- Inf # right censoring
-  
-  # set up data structure for mgcv fitting
-  lvec <- matrix(1 / nS, nS, 1) # quadrature weights for Riemann integration
-  L <- kronecker(matrix(1, n, 1), t(lvec)) # matrix containing quadrature weights for all participants
-  S <- kronecker(matrix(1, n, 1), t(sgrid)) # matrix containing functional domain values
-  
-  # data for modelling
-  data2 <- data.frame(Y = Y,
-                      delta = delta,
-                      X = I(X),
-                      L = I(L),
-                      X_L = I(X * L),
-                      S = I(S),
-                      logY = I(logY),
-                      age_in_years = data$age_in_years,
-                      bmi = data$bmi)
-  
-  # fit functional AFT model using mgcv
-  tgrid <- seq(0, 60, len = 500) 
-  L1 <- kronecker(matrix(1, 1, 1), t(lvec))
-  S1 <- kronecker(matrix(1, 1, 1), t(sgrid))
-  if (visit == "post1") {
-    df_surv_user <- data.frame(X = I(pupil_means_user),
-                      L = I(L1),
-                      X_L = I(pupil_means_user * L1),
-                      S = I(S1),
-                      age_in_years = age_mean_user,
-                      bmi = bmi_mean_user)
-    df_surv_nonuser <- data.frame(X = I(pupil_means_nonuser),
-                      L = I(L1),
-                      X_L = I(pupil_means_nonuser * L1),
-                      S = I(S1),
-                      age_in_years = age_mean_nonuser,
-                      bmi = bmi_mean_nonuser)
-  } else if (visit == "post2") {
-    df_surv_user <- data.frame(X = I(pupil_means_user2),
-                      L = I(L1),
-                      X_L = I(pupil_means_user2 * L1),
-                      S = I(S1),
-                      age_in_years = age_mean_user2,
-                      bmi = bmi_mean_user2)
-    df_surv_nonuser <- data.frame(X = I(pupil_means_nonuser2),
-                      L = I(L1),
-                      X_L = I(pupil_means_nonuser2 * L1),
-                      S = I(S1),
-                      age_in_years = age_mean_nonuser2,
-                      bmi = bmi_mean_nonuser2)
-  }
-  
+  Y     <- data$time_since_use
 
-  if (family == "LAFT") {
-    fit <- gam(logY ~ age_in_years + bmi + s(S, by = X_L, bs = "ps", k = 20), data = data2, family = cnorm)
-    surv_user <- cal_stime(fit = fit, data = df_surv_user, tgrid = tgrid, family = 'lognormal')
-    surv_nonuser <- cal_stime(fit = fit, data = df_surv_nonuser, tgrid = tgrid, family = 'lognormal')
-  } else if (family == "LFCM") {
-    fit <- gam(Y ~ age_in_years + bmi + s(S, by = X_L, bs = "ps", k = 20), weights = delta, data = data2, family = cox.ph)
-    surv_user <- cal_stime(fit = fit, data = df_surv_user, tgrid = tgrid, family = 'cox.ph')
-    surv_nonuser <- cal_stime(fit = fit, data = df_surv_nonuser, tgrid = tgrid, family = 'cox.ph')
-  } else if (family == "AAFT"){
-    fit <- gam(logY ~ age_in_years + bmi + ti(X, S, by = L, bs = c("cr", "cr"), k = c(20, 20), mc = c(TRUE, FALSE)), data = data2, family = cnorm)
-    surv_user <- cal_stime(fit = fit, data = df_surv_user, tgrid = tgrid, family = 'lognormal')
-    surv_nonuser <- cal_stime(fit = fit, data = df_surv_nonuser, tgrid = tgrid, family = 'lognormal')
+  lvec <- matrix(1 / nS, nS, 1)
+  L    <- kronecker(matrix(1, n, 1), t(lvec))
+  S    <- kronecker(matrix(1, n, 1), t(sgrid))
+
+  # Build data2 with functional covariates + selected scalar covariates
+  data2 <- data.frame(Y = Y, delta = delta, X = I(X), L = I(L),
+                      X_L = I(X * L), S = I(S))
+  data2 <- cbind(data2, data[, z_vars, drop = FALSE])
+
+  # Dynamic GAM formula
+  z_str <- paste(z_vars, collapse = " + ")
+  gam_ctrl <- gam.control(maxit = 200)
+  if (family == "LFCM") {
+    form <- as.formula(paste("Y ~", z_str, "+ s(S, by = X_L, bs = 'cr', k = 20)"))
+    fit  <- gam(form, weights = delta, data = data2, family = cox.ph,
+                optimizer = "efs", control = gam_ctrl)
   } else if (family == "AFCM") {
-    fit <- gam(Y ~ age_in_years + bmi + ti(X, S, by = L, bs = c("cr", "cr"), k = c(20, 20), mc = c(TRUE, FALSE)), weights = delta, data = data2, family = cox.ph)
-    surv_user <- cal_stime(fit = fit, data = df_surv_user, tgrid = tgrid, family = 'cox.ph')
-    surv_nonuser <- cal_stime(fit = fit, data = df_surv_nonuser, tgrid = tgrid, family = 'cox.ph')
-  } else if (family %in% c("lognormal", "loglogistic")) {
-    lambda_grid <- exp(seq(log(1000), log(10000), length.out = 500))
-    # best_lambda <- optimize_lambda(Y, delta, X, Z = c("age_in_years", "bmi"), data = data2, family = family, lambda_grid)
-    best_lambda <- optimize_lambda(lambda_grid = lambda_grid, data = data, y = "time_since_use", delta = "is_user",
-                                   x = "^pct_chg_", x_as_regex = TRUE, z = c("age_in_years", "bmi"), family = family,
-                                   k = 20, basis = "bs")$lambda
-    fit <- optimize_AFT(data = data, y = "time_since_use", delta = "is_user", x = "^pct_chg_", x_as_regex = TRUE,
-                        z = c("age_in_years", "bmi"), family = family, k = 20, lambda = best_lambda, basis = "bs",
-                        se = TRUE, bootstrap = TRUE, B = 2000, boot_seed = 42)
-    # fit <- optimize_AFT(Y, delta, X, Z = c("age_in_years", "bmi"), data = data2, family = family, lambda = best_lambda, se = TRUE, bootstrap = TRUE, boot_seed = 42)
-    scale <- fit$b_hat
-    eta_user <-  as.numeric(predict_AFT(fit, df_surv_user))
-    surv_user <- outer(eta_user, tgrid, 
-                  function(eta_user_i, tgrid_j) pnorm((log(tgrid_j) - eta_user_i) / scale, lower.tail = FALSE))
-    eta_nonuser <-  as.numeric(predict_AFT(fit, df_surv_nonuser))
-    surv_nonuser <- outer(eta_nonuser, tgrid, 
-                  function(eta_nonuser_i, tgrid_j) pnorm((log(tgrid_j) - eta_nonuser_i) / scale, lower.tail = FALSE))
+    form <- as.formula(paste("Y ~", z_str,
+                             "+ ti(X, S, by = L, bs = c('cr', 'cr'), k = c(20, 20), mc = c(TRUE, FALSE))"))
+    fit  <- gam(form, weights = delta, data = data2, family = cox.ph,
+                optimizer = "efs", control = gam_ctrl)
+  } else {
+    stop(sprintf("fit_mgcv(): unknown family '%s'. Use fit_lfAFT() or fit_afAFT() for functional AFT models.", family))
   }
-  
+
+  if (compute_surv) {
+    tgrid_surv <- seq(0.1, 120, len = 500)
+    L1 <- kronecker(matrix(1, 1, 1), t(lvec))
+    S1 <- kronecker(matrix(1, 1, 1), t(sgrid))
+    if (visit == "post1") {
+      pup_u  <- pupil_means_user;    pup_nu <- pupil_means_nonuser
+      zm_u   <- z_means_user  %||% z_means1_user
+      zm_nu  <- z_means_nonuser %||% z_means1_nonuser
+    } else {
+      pup_u  <- pupil_means_user2;   pup_nu <- pupil_means_nonuser2
+      zm_u   <- z_means_user  %||% z_means2_user
+      zm_nu  <- z_means_nonuser %||% z_means2_nonuser
+    }
+    make_surv_df <- function(pup, zm) {
+      df <- data.frame(X = I(pup), L = I(L1), X_L = I(pup * L1), S = I(S1))
+      for (v in z_vars) df[[v]] <- zm[[v]]
+      df
+    }
+    df_surv_user    <- make_surv_df(pup_u,  zm_u)
+    df_surv_nonuser <- make_surv_df(pup_nu, zm_nu)
+    surv_user    <- cal_stime(fit = fit, data = df_surv_user,    tgrid = tgrid_surv, family = "cox.ph")
+    surv_nonuser <- cal_stime(fit = fit, data = df_surv_nonuser, tgrid = tgrid_surv, family = "cox.ph")
+  } else {
+    surv_user    <- NULL
+    surv_nonuser <- NULL
+  }
+
   return(list(fit, surv_user, surv_nonuser, data2))
 }
+# Null-coalescing helper
+`%||%` <- function(a, b) if (!is.null(a)) a else b
+```
+
+```{r scalar cox models}
+# ── Compute AUC of pupil response via trapezoidal rule ────────────────────────
+trap_auc <- function(x, grid) sum(diff(grid) * (head(x, -1) + tail(x, -1)) / 2)
+
+df_post1_r$auc <- apply(df_post1_r[, pct_cols1], 1, trap_auc, grid = sgrid1)
+df_post2_r$auc <- apply(df_post2_r[, pct_cols2], 1, trap_auc, grid = sgrid2)
+
+# PMC = PCBlood (plasma marijuana concentration); change to PCTT if preferred
+df_post1_r$PMC <- df_post1_r$PCBlood
+df_post2_r$PMC <- df_post2_r$PCBlood
+
+# ── Assessment 1: fit two scalar Cox models ───────────────────────────────────
+cox1_pmc <- coxph(Surv(time_since_use, is_user) ~ age_in_years + bmi + PMC,
+                  data = df_post1_r, ties = "efron")
+cox1_auc <- coxph(Surv(time_since_use, is_user) ~ age_in_years + bmi + auc,
+                  data = df_post1_r, ties = "efron")
+
+cat("=== Cox model 1a: age + BMI + PMC (Assessment 1) ===\n"); print(summary(cox1_pmc))
+cat("\n=== Cox model 1b: age + BMI + AUC (Assessment 1) ===\n"); print(summary(cox1_auc))
+
+# ── PH assumption tests ───────────────────────────────────────────────────────
+ph_test <- function(fit, label) {
+  cat(sprintf("\n── PH tests: %s ──\n", label))
+
+  # (1) Grambsch-Therneau Schoenfeld test
+  cat("(1) Schoenfeld residuals (cox.zph):\n")
+  zph <- cox.zph(fit, transform = "log")
+  print(zph)
+
+  # (2) Time-interaction LRT via tt()
+  vars   <- names(coef(fit))
+  z_str  <- paste(vars, collapse = " + ")
+  tt_str <- paste(sprintf("tt(%s)", vars), collapse = " + ")
+  fit_ph <- coxph(as.formula(paste("Surv(time_since_use, is_user) ~", z_str)),
+                  data = fit$model, ties = "efron")
+  fit_tv <- coxph(as.formula(paste("Surv(time_since_use, is_user) ~",
+                                   z_str, "+", tt_str)),
+                  tt = function(x, t, ...) x * log(t + 1),
+                  data = fit$model, ties = "efron")
+  lrt_stat <- 2 * (fit_tv$loglik[2] - fit_ph$loglik[2])
+  lrt_df   <- length(grep("^tt\\(", names(coef(fit_tv))))
+  cat(sprintf("(2) Time-interaction LRT: chi-sq = %.3f, df = %d, p = %.4f\n",
+              lrt_stat, lrt_df, pchisq(lrt_stat, lrt_df, lower.tail = FALSE)))
+
+  # (3) Log-log KM plot stratified by LP quartile
+  lp <- predict(fit, type = "lp")
+  lp_q <- cut(lp, breaks = quantile(lp, 0:4/4), include.lowest = TRUE,
+              labels = c("Q1","Q2","Q3","Q4"))
+  df_tmp <- fit$model; df_tmp$lp_q <- lp_q
+  km <- survfit(Surv(time_since_use, is_user) ~ lp_q, data = df_tmp)
+  cols <- c("#2166AC","#4DAC26","#D6604D","#762A83")
+  plot(km, fun = "cloglog", col = cols, lty = 1:4, lwd = 1.5,
+       xlab = "log(Time since use, min)", ylab = "log(-log(S(t)))",
+       main = sprintf("Log-log plot by LP quartile\n%s", label))
+  legend("topleft", paste0("Q", 1:4), col = cols, lty = 1:4, bty = "n", cex = 0.8)
+
+  invisible(list(zph = zph, lrt_stat = lrt_stat,
+                 lrt_pval = pchisq(lrt_stat, lrt_df, lower.tail = FALSE)))
+}
+
+par(mfrow = c(2, 2))
+ph1_pmc <- ph_test(cox1_pmc, "Assessment 1 — age + BMI + PMC")
+ph1_auc <- ph_test(cox1_auc, "Assessment 1 — age + BMI + AUC")
+
+# ── Assessment 2 ──────────────────────────────────────────────────────────────
+# cox2_pmc <- coxph(Surv(time_since_use, is_user) ~ age_in_years + bmi + PMC,
+#                   data = df_post2_r, ties = "efron")
+# cox2_auc <- coxph(Surv(time_since_use, is_user) ~ age_in_years + bmi + auc,
+#                   data = df_post2_r, ties = "efron")
+# 
+# cat("\n=== Cox model 2a: age + BMI + PMC (Assessment 2) ===\n"); print(summary(cox2_pmc))
+# cat("\n=== Cox model 2b: age + BMI + AUC (Assessment 2) ===\n"); print(summary(cox2_auc))
+# 
+# ph2_pmc <- ph_test(cox2_pmc, "Assessment 2 — age + BMI + PMC")
+# ph2_auc <- ph_test(cox2_auc, "Assessment 2 — age + BMI + AUC")
+# par(mfrow = c(1, 1))
 ```
 
 ```{r, linear models}
 # linear functional log-normal AFT model
-tic()
-fit1.laft <- fit_mgcv(data = df_post1_r, family = "LAFT", sgrid = sgrid1, visit = "post1")
-time_stamp <- toc(quiet = TRUE)
-time_laft <- time_stamp$toc - time_stamp$tic
-fit2.laft <- fit_mgcv(data = df_post2_r, family = "LAFT", sgrid = sgrid2, visit = "post2")
+# tic()
+# fit1.laft <- fit_mgcv(data = df_post1_r, family = "LAFT", sgrid = sgrid1, visit = "post1")
+# time_stamp <- toc(quiet = TRUE)
+# time_laft <- time_stamp$toc - time_stamp$tic
+# fit2.laft <- fit_mgcv(data = df_post2_r, family = "LAFT", sgrid = sgrid2, visit = "post2")
 
 # linear functional Cox model
 fit1.lfcm <- fit_mgcv(data = df_post1_r, family = "LFCM", sgrid = sgrid1, visit = "post1")
@@ -322,17 +474,29 @@ fit2.lfcm <- fit_mgcv(data = df_post2_r, family = "LFCM", sgrid = sgrid2, visit 
 
 # lognormal lfAFT
 tic()
-fit1.faft <- fit_mgcv(data = df_post1_r, family = "lognormal", sgrid = sgrid1, visit = "post1")
+fit1.faft <- fit_lfAFT(data = df_post1_r, y = "time_since_use", delta = "is_user",
+                        x = "^pct_chg_", x_as_regex = TRUE, z = z_vars,
+                        family = "lognormal", k = 20, basis = "bs", s_grid = sgrid1,
+                        se = TRUE, bootstrap = TRUE, B = 2000, boot_seed = 42)
 time_stamp <- toc(quiet = TRUE)
 time_faft <- time_stamp$toc - time_stamp$tic
-fit2.faft <- fit_mgcv(data = df_post2_r, family = "lognormal", sgrid = sgrid2, visit = "post2")
+fit2.faft <- fit_lfAFT(data = df_post2_r, y = "time_since_use", delta = "is_user",
+                        x = "^pct_chg_", x_as_regex = TRUE, z = z_vars,
+                        family = "lognormal", k = 20, basis = "bs", s_grid = sgrid2,
+                        se = TRUE, bootstrap = TRUE, B = 2000, boot_seed = 42)
 
 # loglogistic lfAFT
 tic()
-fit1.faft2 <- fit_mgcv(data = df_post1_r, family = "loglogistic", sgrid = sgrid1, visit = "post1")
+fit1.faft2 <- fit_lfAFT(data = df_post1_r, y = "time_since_use", delta = "is_user",
+                         x = "^pct_chg_", x_as_regex = TRUE, z = z_vars,
+                         family = "loglogistic", k = 20, basis = "bs", s_grid = sgrid1,
+                         se = TRUE, bootstrap = TRUE, B = 2000, boot_seed = 42)
 time_stamp <- toc(quiet = TRUE)
 time_faft2 <- time_stamp$toc - time_stamp$tic
-fit2.faft2 <- fit_mgcv(data = df_post2_r, family = "loglogistic", sgrid = sgrid2, visit = "post2")
+fit2.faft2 <- fit_lfAFT(data = df_post2_r, y = "time_since_use", delta = "is_user",
+                         x = "^pct_chg_", x_as_regex = TRUE, z = z_vars,
+                         family = "loglogistic", k = 20, basis = "bs", s_grid = sgrid2,
+                         se = TRUE, bootstrap = TRUE, B = 2000, boot_seed = 42)
 ```
 
 ```{r}
@@ -406,20 +570,22 @@ boot_ci_gam <- function(fit, newdata, term_pattern = "s\\(S\\):X_L",
 
 ```{r, esimtated coefficient function}
 # estimated coefficient function
-df_pred1 <- data.frame(S = sgrid1, X_L = 1, age_in_years = age_mean_user, bmi = bmi_mean_user)
+df_pred1 <- data.frame(S = sgrid1, X_L = 1)
+for (v in z_vars) df_pred1[[v]] <- z_means1_user[[v]]
 # coef.est.laft1 <- predict(fit1.laft[[1]], newdata = df_pred1, type = "terms", term = "s(S):X_L", se.fit = TRUE)
 # coef.est.lfcm1 <- predict(fit1.lfcm[[1]], newdata = df_pred1, type = "terms", term = "s(S):X_L", se.fit = TRUE)
 # Bootstrap percentile CIs
-coef.est.laft1 <- boot_ci_gam(fit = fit1.laft[[1]], newdata = df_pred1, term_pattern = "s\\(S\\):X_L",
-                              B = 2000, conf = 0.95, seed = 42)
+# boot_ci_gam on LAFT model removed (LAFT discarded; use fit1.faft for lognormal lfAFT CIs)
+# coef.est.laft1 <- boot_ci_gam(fit = fit1.laft[[1]], newdata = df_pred1, term_pattern = "s\(S\):X_L",
+#                               B = 2000, conf = 0.95, seed = 42)
 
 plot_coef1 <- data.frame(time = sgrid1,
-                        coef_faft2 = fit1.faft2[[1]]$beta1_hat,
-                        coef_faft2_lb = fit1.faft2[[1]]$beta1_boot_ci_lower,
-                        coef_faft2_ub = fit1.faft2[[1]]$beta1_boot_ci_upper,
-                        coef_laft = fit1.faft[[1]]$beta1_hat,
-                        coef_laft_lb = fit1.faft[[1]]$beta1_boot_ci_lower,
-                        coef_laft_ub = fit1.faft[[1]]$beta1_boot_ci_upper
+                        coef_faft2 = fit1.faft2$betaX_hat,
+                        coef_faft2_lb = fit1.faft2$betaX_boot_ci_lower,
+                        coef_faft2_ub = fit1.faft2$betaX_boot_ci_upper,
+                        coef_laft = fit1.faft$betaX_hat,
+                        coef_laft_lb = fit1.faft$betaX_boot_ci_lower,
+                        coef_laft_ub = fit1.faft$betaX_boot_ci_upper
                         # coef_laft = coef.est.laft1$est,
                         # coef_laft_lb = coef.est.laft1$ci_lower,
                         # coef_laft_ub = coef.est.laft1$ci_upper
@@ -430,18 +596,19 @@ plot_coef1 <- data.frame(time = sgrid1,
 # plot_coef1$sig_faft2 <- (plot_coef1$coef_faft2_lb > 0)|(plot_coef1$coef_faft2_ub < 0)
 # plot_coef1$sig_laft <- (plot_coef1$coef_laft_lb > 0)|(plot_coef1$coef_laft_ub < 0)
 
-df_pred2 <- data.frame(S = sgrid2, X_L = 1, age_in_years = age_mean_user2, bmi = bmi_mean_user2)
+df_pred2 <- data.frame(S = sgrid2, X_L = 1)
+for (v in z_vars) df_pred2[[v]] <- z_means2_user[[v]]
 # Bootstrap percentile CIs
-coef.est.laft2 <- boot_ci_gam(fit = fit2.laft[[1]], newdata = df_pred2, term_pattern = "s\\(S\\):X_L", 
-                               B = 2000, conf = 0.95, seed = 42)
+# coef.est.laft2 <- boot_ci_gam(fit = fit2.laft[[1]], newdata = df_pred2, term_pattern = "s\(S\):X_L",
+#                                B = 2000, conf = 0.95, seed = 42)
 
 plot_coef2 <- data.frame(time = sgrid2,
-                        coef_faft2 = fit2.faft2[[1]]$beta1_hat,
-                        coef_faft2_lb = fit2.faft2[[1]]$beta1_boot_ci_lower,
-                        coef_faft2_ub = fit2.faft2[[1]]$beta1_boot_ci_upper,
-                        coef_laft = fit2.faft[[1]]$beta1_hat,
-                        coef_laft_lb = fit2.faft[[1]]$beta1_boot_ci_lower,
-                        coef_laft_ub = fit2.faft[[1]]$beta1_boot_ci_upper
+                        coef_faft2 = fit2.faft2$betaX_hat,
+                        coef_faft2_lb = fit2.faft2$betaX_boot_ci_lower,
+                        coef_faft2_ub = fit2.faft2$betaX_boot_ci_upper,
+                        coef_laft = fit2.faft$betaX_hat,
+                        coef_laft_lb = fit2.faft$betaX_boot_ci_lower,
+                        coef_laft_ub = fit2.faft$betaX_boot_ci_upper
                         # coef_laft = coef.est.laft2$est,
                         # coef_laft_lb = coef.est.laft2$ci_lower,
                         # coef_laft_ub = coef.est.laft2$ci_upper
@@ -460,7 +627,7 @@ p_coef1 <- ggplot(data = plot_coef1, aes(x = time)) +
                        breaks = c("lognormal lfAFT", "loglogistic lfAFT")) +
   ylim(-0.25, 0.2) +
     labs(
-      x = NULL,
+      x = "Senconds since light stimulus (s)",
       y = expression(beta~"(s)"),
       title = "Assessment 1",
       color = "Model",
@@ -480,12 +647,18 @@ p_coef2 <- ggplot(data = plot_coef2, aes(x = time)) +
                        breaks = c("lognormal lfAFT", "loglogistic lfAFT")) +
   ylim(-0.25, 0.2) +
     labs(
-      x = NULL,
+      x = "Senconds since light stimulus (s)",
       y = expression(beta~"(s)"),
       title = "Assessment 2",
       color = "Model",
       fill = "Model"
     )
+
+p_coef <- p_coef1 + p_coef2 +
+  plot_layout(guides = 'collect', axes = "collect")
+
+# get legend
+leg <- cowplot::get_legend(p_coef + theme(legend.position = "top"))
 
 p_coef <- p_coef1 + p_coef2 +
   plot_layout(guides = 'collect', axes = "collect") &
@@ -499,10 +672,14 @@ p_coef <- p_coef1 + p_coef2 +
 ```{r, additive models}
 # additive lognormal AFT model
 tic()
-fit1.aaft <- fit_mgcv(data = df_post1_r, family = "AAFT", sgrid = sgrid1, visit = "post1")
+fit1.aaft <- fit_afAFT(data = df_post1_r, y = "time_since_use", delta = "is_user",
+                    x = "^pct_chg_", x_as_regex = TRUE, z = z_vars,
+                    family = "lognormal", k = 20, basis = "bs", s_grid = sgrid1)
 time_stamp <- toc(quiet = TRUE)
 time_aaft <- time_stamp$toc - time_stamp$tic
-fit2.aaft <- fit_mgcv(data = df_post2_r, family = "AAFT", sgrid = sgrid2, visit = "post2")
+fit2.aaft <- fit_afAFT(data = df_post2_r, y = "time_since_use", delta = "is_user",
+                    x = "^pct_chg_", x_as_regex = TRUE, z = z_vars,
+                    family = "lognormal", k = 20, basis = "bs", s_grid = sgrid2)
 # AFCM
 # fit1.afcm <- fit_mgcv(data = df_post1_r, family = "AFCM", sgrid = sgrid)
 # summary(fit1.afcm[[1]])
@@ -525,8 +702,8 @@ df_pred2 <- expand.grid(X = xgrid2, S = sgrid2)
 df_pred2$L = 1
 df_pred2$age_in_years = age_mean_user2
 df_pred2$bmi = bmi_mean_user2
-pred_smooth_aaft <- predict(fit1.aaft[[1]], newdata = df_pred, type = "terms", terms = "ti(X,S):L", se = TRUE)
-pred_smooth_aaft2 <- predict(fit2.aaft[[1]], newdata = df_pred2, type = "terms", terms = "ti(X,S):L", se = TRUE)
+pred_smooth_aaft <- predict(fit1.aaft, newdata = df_pred, type = "terms", terms = "ti(S,X):L", se = TRUE)
+pred_smooth_aaft2 <- predict(fit2.aaft, newdata = df_pred2, type = "terms", terms = "ti(S,X):L", se = TRUE)
 
 # pred_smooth <- pred_smooth_aaft
 # pred_smooth$lb = pred_smooth$fit - qnorm(0.975) * pred_smooth$se.fit
@@ -618,24 +795,20 @@ p_surface <- p_aaft + p_aaft2 +
 #     barwidth = unit(8, "cm"), barheight = unit(0.5, "cm")
 #   ))
 
-library(cowplot)
-
-leg <- cowplot::get_legend(p_coef1 + theme(legend.position = "top"))
-
 p_comb <- plot_grid(
   leg,                                # legend on top
   p_coef / p_surface,                  # both panels
   ncol = 1, rel_heights = c(0.1, 1)   # adjust height ratio
 )
 
-ggsave(file.path(fig_dir, "fig_data_coef_new.jpeg"), p_comb, width = 8, height = 6, dpi = 500)
+# ggsave(file.path(fig_dir, "fig_data_coef.jpeg"), p_comb, width = 8, height = 6, dpi = 500)
 ```
 
 ```{r, residual plots}
 ### Standardized Residual Plots
 
 # log-logistic
-res <- (log(df_post1_r$time_since_use) - as.numeric(fit1.faft2[[1]]$lp)) / fit1.faft2[[1]]$b_hat
+res <- (log(df_post1_r$time_since_use) - as.numeric(fit1.faft2$lp)) / fit1.faft2$b_hat
 resKM <- survfit(Surv(res, is_user) ~ 1, data = df_post1_r)
 plot(resKM, mark.time = FALSE, xlab = "Standardized Residual", ylab = "Survival Probability")
 xx <- seq(min(res), max(res), length.out = 35)
@@ -656,37 +829,214 @@ legend("bottomleft", c("KM estimate", "95% CI KM estimate",
 #     "Survival function of extreme value distribution"), 
 #      lty = c(1,2,1), col = c(1,1,2), bty = "n")
 
-# log-normal
-fit1.laft[[1]]$scale <- as.numeric(gsub(".*\\(([^)]+)\\).*", "\\1", fit1.laft[[1]]$family$family)) 
-res <- (log(df_post1_r$time_since_use) - fit1.laft[[1]]$linear.predictors) / fit1.laft[[1]]$scale
-resKM <- survfit(Surv(res, is_user) ~ 1, data = df_post1_r)
-plot(resKM, mark.time = FALSE, xlab = "Standardized Residual", ylab = "Survival Probability")
-xx <- seq(min(res), max(res), length.out = 35)
-yy <- pnorm(xx, lower.tail = FALSE)
-lines(xx, yy, col = "red", lwd = 2)
-legend("bottomleft", c("KM estimate", "95% CI KM estimate", 
-    "Survival function of normal distribution"), 
-     lty = c(1,2,1), col = c(1,1,2), bty = "n")
+# Lognormal residuals (LAFT/mgcv cnorm model removed; use lognormal lfAFT via funAFT)
+# fit1.laft[[1]]$scale <- as.numeric(gsub(".*\(([^)]+)\).*", "\1", fit1.laft[[1]]$family$family))
+# res <- (log(df_post1_r$time_since_use) - fit1.laft[[1]]$linear.predictors) / fit1.laft[[1]]$scale
+# resKM <- survfit(Surv(res, is_user) ~ 1, data = df_post1_r)
+# plot(resKM, mark.time = FALSE, xlab = "Standardized Residual", ylab = "Survival Probability")
+# xx <- seq(min(res), max(res), length.out = 35)
+# yy <- pnorm(xx, lower.tail = FALSE)
+# lines(xx, yy, col = "red", lwd = 2)
+# legend("bottomleft", c("KM estimate", "95% CI KM estimate",
+#     "Survival function of normal distribution"),
+#      lty = c(1,2,1), col = c(1,1,2), bty = "n")
+```
+
+```{r, PH assumption tests}
+# ── Proportional Hazards Assumption Tests for LFCM and AFCM ──────────────────
+# Three complementary approaches:
+#   1. Scalar coxph + cox.zph(): per-covariate Schoenfeld test for age & BMI.
+#   2. tt() time-interaction test: explicit LRT for whether age/BMI HR varies
+#      with log(t) — significant coefficient => PH violated for that covariate.
+#   3. Log-log KM plot stratified by LFCM linear predictor quartile: visual
+#      check for the functional component (parallel => PH plausible).
+
+# ── Helper: run all three tests for one assessment ───────────────────────────
+ph_diagnostics <- function(fit_list, raw_data, label) {
+  d   <- fit_list[[4]]          # internal data2: Y = time, delta = event
+  lp  <- predict(fit_list[[1]], type = "link")
+
+  cat(sprintf("
+
+══════════════════════════════════════════
+"))
+  cat(sprintf("  PH Diagnostics: %s
+", label))
+  cat(sprintf("══════════════════════════════════════════
+"))
+
+  # ── 1. Scalar coxph: Schoenfeld test for selected z_vars ─────────────────
+  cat(sprintf("
+--- (1) Grambsch-Therneau test (scalar covariates: %s) ---
+", paste(z_vars, collapse = ", ")))
+  z_formula_d <- paste(paste0("d$", z_vars), collapse = " + ")
+  fit_scalar <- coxph(as.formula(paste("Surv(d$Y, d$delta) ~", z_formula_d)))
+  zph_scalar <- cox.zph(fit_scalar, transform = "log")
+  print(zph_scalar)
+
+  # ── 2. tt() time-interaction LRT ─────────────────────────────────────────
+  cat(sprintf("
+--- (2) Time-interaction test via tt(): %s * log(t) ---
+", paste(z_vars, collapse = ", ")))
+  z_str  <- paste(z_vars, collapse = " + ")
+  tt_str <- paste(paste0("tt(", z_vars, ")"), collapse = " + ")
+  fit_ph <- coxph(as.formula(paste("Surv(time_since_use, is_user) ~", z_str)),
+                  data = raw_data)
+  fit_tv <- coxph(as.formula(paste("Surv(time_since_use, is_user) ~", z_str, "+", tt_str)),
+                  tt = function(x, t, ...) x * log(t + 1),
+                  data = raw_data)
+  # tt() expands the dataset internally so anova() fails on size mismatch;
+  # use manual LRT from log-likelihoods instead.
+  lrt_stat <- 2 * (fit_tv$loglik[2] - fit_ph$loglik[2])
+  lrt_df   <- length(grep("^tt\\(", names(coef(fit_tv))))
+  lrt_pval <- pchisq(lrt_stat, df = lrt_df, lower.tail = FALSE)
+  cat(sprintf("  LRT chi-sq = %.4f, df = %d, p = %.4f\n", lrt_stat, lrt_df, lrt_pval))
+  cat("  tt() coefficients (non-zero => time-varying HR):\n")
+  tv_coefs <- coef(fit_tv)[grep("^tt\\(", names(coef(fit_tv)))]
+  print(round(tv_coefs, 4))
+
+  # ── 3. Schoenfeld test on functional LP directly ─────────────────────────
+  # Fit a scalar Cox with the functional LP as the sole predictor.
+  # This makes the df=1 logic transparent: there is one functional effect
+  # (one integral), so one Schoenfeld residual is both correct and complete.
+  cat("
+--- (3) Schoenfeld test on functional linear predictor ---
+")
+  lp_df     <- data.frame(Y = d$Y, delta = d$delta, lp = lp)
+  fit_lp    <- coxph(Surv(Y, delta) ~ lp, data = lp_df)
+  zph_lp    <- cox.zph(fit_lp, transform = "log")
+  print(zph_lp)
+
+  # ── 4. Time-interaction LRT on functional LP ──────────────────────────────
+  cat("
+--- (4) Time-interaction test on functional LP: LP * log(t) ---
+")
+  fit_ph_lp <- coxph(Surv(time_since_use, is_user) ~ lp,
+                     data = cbind(raw_data, lp = lp))
+  fit_tv_lp <- coxph(Surv(time_since_use, is_user) ~ lp + tt(lp),
+                     tt = function(x, t, ...) x * log(t + 1),
+                     data = cbind(raw_data, lp = lp))
+  lrt_lp    <- 2 * (fit_tv_lp$loglik[2] - fit_ph_lp$loglik[2])
+  pval_lp   <- pchisq(lrt_lp, df = 1, lower.tail = FALSE)
+  cat(sprintf("  LRT chi-sq = %.4f, df = 1, p = %.4f\n", lrt_lp, pval_lp))
+  cat(sprintf("  tt(LP) coef = %.4f (non-zero => time-varying functional HR)\n",
+              coef(fit_tv_lp)["tt(lp)"]))
+
+  # ── 5. Schoenfeld test with individual + global p-values ─────────────────
+  # Decompose GAM prediction into per-term contributions so that cox.zph()
+  # can return one row per component (functional smooth, each scalar covariate)
+  # plus a GLOBAL row — the standard individual+global layout.
+  # Note: cox.zph() cannot be called directly on a gam object; we rebuild a
+  # coxph using the term-level predicted values as separate numeric predictors.
+  # This works for both LFCM and AFCM: for AFCM the ti(X,S,by=L,...) smooth
+  # returns one integrated scalar per subject, just like the LFCM smooth.
+  cat("
+--- (5) Schoenfeld test: individual (per term) + global p-values ---
+")
+  zph_terms <- tryCatch({
+    terms_mat <- predict(fit_list[[1]], type = "terms")   # n x n_terms matrix
+
+    # Flatten any matrix-valued columns (can occur for AFCM matrix predictors)
+    # and drop zero-variance terms that would make coxph singular.
+    term_df <- as.data.frame(
+      lapply(seq_len(ncol(terms_mat)), function(j) as.numeric(terms_mat[, j]))
+    )
+    term_cols_raw <- colnames(terms_mat)
+    term_cols     <- make.names(term_cols_raw)
+    # Ensure uniqueness after make.names (edge case with very long smooth names)
+    term_cols     <- make.unique(term_cols)
+    colnames(term_df) <- term_cols
+
+    # Drop zero-variance columns (degenerate terms cause coxph rank deficiency)
+    ok_cols   <- term_cols[vapply(term_df, function(x) var(x, na.rm = TRUE) > 1e-12, logical(1))]
+    term_df   <- term_df[, ok_cols, drop = FALSE]
+    term_df$Y     <- d$Y
+    term_df$delta <- d$delta
+
+    cat(sprintf("  Terms extracted: %s\n", paste(ok_cols, collapse = ", ")))
+
+    f_terms   <- as.formula(paste("Surv(Y, delta) ~",
+                                  paste(ok_cols, collapse = " + ")))
+    fit_terms <- coxph(f_terms, data = term_df, ties = "efron")
+    zph_out   <- cox.zph(fit_terms, transform = "log")
+    print(zph_out)
+    zph_out
+  }, error = function(e) {
+    cat(sprintf("  [Test 5 failed: %s]\n", e$message))
+    NULL
+  })
+
+  # ── 6. Log-log plot stratified by LP quartile ─────────────────────────────
+  cat("
+--- (6) Log-log KM plot by linear predictor quartile ---
+")
+  raw_data$lp_quartile <- cut(lp, breaks = quantile(lp, probs = 0:4/4),
+                               include.lowest = TRUE,
+                               labels = c("Q1 (low)", "Q2", "Q3", "Q4 (high)"))
+  km_q <- survfit(Surv(time_since_use, is_user) ~ lp_quartile, data = raw_data)
+  cols <- c("#2166AC", "#4DAC26", "#D6604D", "#762A83")
+  plot(km_q, fun = "cloglog",
+       col = cols, lty = 1:4, lwd = 1.5,
+       xlab = "log(Time since cannabis use, min)",
+       ylab = "log(-log(S(t)))",
+       main = sprintf("Log-log Plot by LP Quartile
+%s", label))
+  legend("topleft",
+         legend = c("Q1 (low risk)", "Q2", "Q3", "Q4 (high risk)"),
+         col = cols, lty = 1:4, lwd = 1.5, bty = "n", cex = 0.85)
+
+  invisible(list(zph_scalar = zph_scalar, lrt_stat  = lrt_stat,  lrt_pval = lrt_pval,
+                 zph_lp     = zph_lp,     lrt_lp   = lrt_lp,    pval_lp  = pval_lp,
+                 zph_terms  = zph_terms))
+}
+
+# ── Assessment 1: LFCM ───────────────────────────────────────────────────────
+par(mfrow = c(1, 1))
+ph1_lfcm <- ph_diagnostics(fit1.lfcm, df_post1_r, "LFCM — Assessment 1")
+
+# ── Assessment 2: LFCM ───────────────────────────────────────────────────────
+ph2_lfcm <- ph_diagnostics(fit2.lfcm, df_post2_r, "LFCM — Assessment 2")
+
+# ── AFCM — fit on full data for PH check only ────────────────────────────────
+fit1.afcm_ph <- fit_mgcv(data = df_post1_r, family = "AFCM", sgrid = sgrid1, visit = "post1")
+fit2.afcm_ph <- fit_mgcv(data = df_post2_r, family = "AFCM", sgrid = sgrid2, visit = "post2")
+
+ph1_afcm <- ph_diagnostics(fit1.afcm_ph, df_post1_r, "AFCM — Assessment 1")
+ph2_afcm <- ph_diagnostics(fit2.afcm_ph, df_post2_r, "AFCM — Assessment 2")
 ```
 
 ```{r, CDF}
 ### CDF
-# cdf_faft <- 1 - fit1.faft[[2]]
-cdf_faft2 <- 1 - fit1.faft2[[2]]
-cdf_laft <- 1 - fit1.laft[[2]]
-cdf_aaft <- 1 - fit1.aaft[[2]]
-cdf_lfcm <- 1 - fit1.lfcm[[2]]
-cdf_afcm <- 1 - fit1.afcm[[2]]
+# Representative subject data frames for predict_lfAFT (1 row: mean pupil response)
+tgrid_cdf <- seq(0.1, 120, len = 500)
+pct_cols1 <- grep("^pct_chg_", colnames(df_post1_r), value = TRUE)
+pct_cols2 <- grep("^pct_chg_", colnames(df_post2_r), value = TRUE)
 
+rep_user1 <- data.frame(
+  time_since_use = 999, is_user = 1L,
+  setNames(as.data.frame(matrix(as.numeric(pupil_means_user), nrow = 1)), pct_cols1)
+)
+for (v in z_vars) rep_user1[[v]] <- z_means1_user[[v]]
 
-tgrid <- seq(0, 60, len = 500) 
+rep_user2 <- data.frame(
+  time_since_use = 999, is_user = 1L,
+  setNames(as.data.frame(matrix(as.numeric(pupil_means_user2), nrow = 1)), pct_cols2)
+)
+for (v in z_vars) rep_user2[[v]] <- z_means2_user[[v]]
+
+cdf_faft2 <- predict_lfAFT(fit1.faft2, rep_user1, type = "survival", times = tgrid_cdf)
+cdf_faft  <- predict_lfAFT(fit1.faft,  rep_user1, type = "survival", times = tgrid_cdf)
+cdf_aaft  <- predict_afAFT(fit1.aaft,  rep_user1, type = "survival", times = tgrid_cdf)
+cdf_lfcm  <- 1 - fit1.lfcm[[2]]
+cdf_afcm  <- 1 - fit1.afcm[[2]]
+
+tgrid <- tgrid_cdf 
 plot_surv <- data.frame(time = tgrid,
-                          # cdf_faft = cdf_faft[i, ],
-                          cdf_faft2 = cdf_faft2[1, ],
-                          cdf_laft = cdf_laft[1, ],
-                          cdf_aaft = cdf_aaft[1, ],
-                          cdf_lfcm = cdf_lfcm[1, ],
-                          cdf_afcm = cdf_afcm[1, ]
+                          cdf_faft2 = as.numeric(cdf_faft2),
+                          cdf_laft  = as.numeric(cdf_faft),   # lognormal lfAFT
+                          cdf_aaft  = as.numeric(cdf_aaft),
+                          cdf_lfcm  = cdf_lfcm[1, ],
+                          cdf_afcm  = cdf_afcm[1, ]
                           )
   
   p_user <- ggplot(plot_surv, aes(x = time)) +
@@ -717,17 +1067,681 @@ plot_surv <- data.frame(time = tgrid,
   ylim(0, 1)
 ```
 
+```{r, functional logstic regression}
+library(tidyfun)
+df_post1_r$X_mat <- as.matrix(df_post1_r[, grep("^pct_chg_", colnames(df_post1_r))])
+#df_post1_r$is_user_45 <- ifelse(df_post1_r$time_since_use <= 45, 1, 0)
+df_post1_r$is_user_60 <- ifelse(df_post1_r$time_since_use <= 60, 1, 0)
+df_post1_r$is_user_120 <- ifelse(df_post1_r$time_since_use <= 120, 1, 0)
+df_post2_r$X_mat <- as.matrix(df_post2_r[, grep("^pct_chg_", colnames(df_post2_r))])
+df_post2_r$is_user_60 <- ifelse(df_post2_r$time_since_use <= 60, 1, 0)
+df_post2_r$is_user_120 <- ifelse(df_post2_r$time_since_use <= 120, 1, 0)
+
+fit1.logistic = pfr(as.formula(paste("is_user_60 ~",  paste(z_vars, collapse = " + "), "+ lf(X_mat, argvals = sgrid1)")),
+                    family = binomial(), method = "REML", data = df_post1_r)
+fit2.logistic = pfr(as.formula(paste("is_user_120 ~", paste(z_vars, collapse = " + "), "+ lf(X_mat, argvals = sgrid2)")),
+                    family = binomial(), method = "REML", data = df_post2_r)
+# fit3.logistic = pfr(is_user_120 ~ age_in_years + bmi + lf(X_mat, argvals = sgrid), 
+#                     family = binomial(), method = "REML", data = df_post1_r)
+# summary(fit1.logistic)
+# summary(fit2.logistic)
+# summary(fit3.logistic)
+
+coef_df = 
+  coef(fit3.logistic) %>% 
+  rename(estimate = value) %>% 
+  mutate(
+    method = "pfr_adj",
+    ub = estimate + 1.96 * se,
+    lb = estimate - 1.96 * se) %>% 
+  tf_nest(.id = method, .arg = X_mat.argvals)
+
+coef_df %>% 
+  ggplot(aes(y = estimate)) + 
+  geom_spaghetti(alpha = 1, linewidth = 1.2) +
+  geom_errorband(aes(ymax = ub, ymin = lb)) +
+  labs(x = "Seconds since light stimulus (s)", 
+       y = expression(beta~"(s)"),
+       title = "Cutoff = 120 min") +
+  theme_minimal()
+
+df_pred <- predict(fit1.logistic, type = "response")
+
+df_plot <- data.frame(time = sgrid,
+                      pupil_means_nonuser = as.numeric(pupil_means_nonuser),
+                      pupil_means_user = as.numeric(pupil_means_user))
+
+ggplot(data = df_plot, mapping = aes(x = time)) +
+  geom_line(aes(y = pupil_means_user, color = "User"), linewidth = 1) +
+  geom_line(aes(y = pupil_means_nonuser, color = "Nonuser"), linewidth = 1) +
+  scale_color_manual(values = c("User" = "red", "Nonuser" = "blue")) +
+  labs(x = "Seconds since light stimulus (s)", 
+       y = expression(X~"(s)"),
+       title = "Average pupil light response curve",
+       color = NULL) +
+  theme_minimal() +
+  theme(legend.position = c(0.9, 0.9))
+```
+
+```{r cross validation 1}
+library(survAUC)
+library(pROC)
+
+# ── Helper functions ──────────────────────────────────────────────────────────
+
+# Build mgcv-style data structure for a dataset
+make_data2 <- function(data, sgrid, z_vars = get("z_vars", envir = .GlobalEnv)) {
+  n   <- nrow(data)
+  nS  <- length(sgrid)
+  X   <- as.matrix(data[, grep("^pct_chg_", colnames(data))])
+  delta <- data$is_user
+  Y   <- data$time_since_use
+  logY <- cbind(log(Y), log(Y)); logY[delta == 0, 2] <- Inf
+  lvec <- matrix(1 / nS, nS, 1)
+  L    <- kronecker(matrix(1, n, 1), t(lvec))
+  S    <- kronecker(matrix(1, n, 1), t(sgrid))
+  base <- data.frame(Y = Y, delta = delta, X = I(X), L = I(L),
+                     X_L = I(X * L), S = I(S), logY = I(logY))
+  cbind(base, data[, z_vars, drop = FALSE])
+}
+
+# IPCW Integrated Brier Score (trapezoidal, normalized by time range)
+# IPCW Integrated Brier Score: evaluates at observed event times in the test set
+# (trapezoidal first interval + right Riemann sum, normalized by max event time)
+cal_IPCW_IBS <- function(S_mat, time_test, event_test, time_train, event_train, tgrid) {
+  n_test  <- length(time_test)
+  km_cens <- survfit(Surv(time_train, 1 - event_train) ~ 1)
+  get_G <- function(t_vals) {
+    sf     <- stepfun(km_cens$time, c(1, km_cens$surv))
+    G_vals <- sf(t_vals)
+    G_vals[G_vals == 0] <- min(km_cens$surv[km_cens$surv > 0], na.rm = TRUE)
+    G_vals
+  }
+  utimes <- sort(unique(time_test[event_test == 1]))
+  if (length(utimes) == 0) return(NA_real_)
+  Brier_t <- vapply(utimes, function(ti) {
+    col_idx <- max(which(tgrid <= ti))
+    S_ti    <- S_mat[, col_idx]
+    idx1    <- (time_test <= ti) & (event_test == 1)
+    idx2    <- time_test > ti
+    (sum(S_ti[idx1]^2 / get_G(time_test[idx1])) +
+       sum((1 - S_ti[idx2])^2 / get_G(ti))) / n_test
+  }, numeric(1))
+  iBrier <- 0.5 * utimes[1] * Brier_t[1]
+  if (length(utimes) > 1)
+    iBrier <- iBrier + sum(Brier_t[-1] * diff(utimes))
+  iBrier / max(utimes)
+}
+
+# IPCW Brier Score at a single time point
+cal_IPCW_BS_t <- function(S_t, time_test, event_test, time_train, event_train, t_star) {
+  n_test  <- length(time_test)
+  km_cens <- survfit(Surv(time_train, 1 - event_train) ~ 1)
+  get_G <- function(t_vals) {
+    sf     <- stepfun(km_cens$time, c(1, km_cens$surv))
+    G_vals <- sf(t_vals)
+    G_vals[G_vals == 0] <- min(km_cens$surv[km_cens$surv > 0], na.rm = TRUE)
+    G_vals
+  }
+  idx1 <- (time_test <= t_star) & (event_test == 1)
+  idx2 <- time_test > t_star
+  (sum((S_t[idx1]^2) / get_G(time_test[idx1])) +
+     sum(((1 - S_t[idx2])^2) / get_G(t_star))) / n_test
+}
+
+# ── Cross-validation setup ────────────────────────────────────────────────────
+# Keep only columns needed for modelling; drops singleton factors (mtm, eye, etc.)
+keep_cols1 <- c("time_since_use", "is_user", z_vars,
+                grep("^pct_chg_", colnames(df_post1_r), value = TRUE))
+cv_data1 <- df_post1_r[, keep_cols1]
+
+set.seed(916)
+n_folds <- 10
+fold    <- createFolds(cv_data1$time_since_use, k = n_folds, list = FALSE)
+tgrid   <- seq(0.1, 120, len = 500)   # for IPCW IBS; follow-up window [0.1, 120] min
+t_eval  <- 120                         # time point for time-specific comparison
+
+model_names <- c("scalar lognormal AFT", "loglogistic lfAFT", "lognormal lfAFT",
+                 "lognormal afAFT", "LFCM", "AFCM", "func logistic")
+n_surv <- 6  # number of survival models
+
+# Helpers for creating metric matrices
+new_mat      <- function() matrix(NA, n_folds, 7,      dimnames = list(NULL, model_names))
+new_mat_surv <- function() matrix(NA, n_folds, n_surv, dimnames = list(NULL, model_names[1:6]))
+
+IBS_cv    <- new_mat_surv(); IBS_tr    <- new_mat_surv()
+BS60_cv   <- new_mat();      BS60_tr   <- new_mat()
+BS120_cv  <- new_mat();      BS120_tr  <- new_mat()
+Cindex_cv <- new_mat();      Cindex_tr <- new_mat()
+Sens_cv   <- new_mat();      Sens_tr   <- new_mat()
+Spec_cv   <- new_mat();      Spec_tr   <- new_mat()
+
+
+for (k in 1:n_folds) {
+  cat(sprintf("Assessment 1 — Fold %d / %d\n", k, n_folds))
+
+  train_data <- cv_data1[-which(fold == k), ]
+  test_data  <- cv_data1[ which(fold == k), ]
+
+  # Add required columns
+  train_data$X_mat       <- as.matrix(train_data[, grep("^pct_chg_", colnames(train_data))])
+  test_data$X_mat        <- as.matrix(test_data[,  grep("^pct_chg_", colnames(test_data))])
+  train_data$is_user_120 <- as.integer(train_data$time_since_use <= t_eval)
+  test_data$is_user_120  <- as.integer(test_data$time_since_use  <= t_eval)
+
+  time_train  <- train_data$time_since_use; event_train <- train_data$is_user
+  time_test   <- test_data$time_since_use;  event_test  <- test_data$is_user
+  Surv_train  <- Surv(time_train, event_train)
+  Surv_test   <- Surv(time_test,  event_test)
+  truth120       <- as.integer(time_test  <= t_eval & event_test  == 1)
+  truth120_train <- as.integer(time_train <= t_eval & event_train == 1)
+  t_idx   <- which.min(abs(tgrid - t_eval))
+  t_idx60 <- which.min(abs(tgrid - 60))
+
+  # Drop z_vars with zero/near-zero variance in this training fold (prevents GCV failure)
+  z_vars_fold <- z_vars[vapply(z_vars, function(v) {
+    x <- train_data[[v]]; !all(is.na(x)) && var(x, na.rm = TRUE) > 1e-10
+  }, logical(1))]
+  if (length(z_vars_fold) == 0) z_vars_fold <- z_vars[1]
+
+
+  train_data2 <- make_data2(train_data, sgrid1, z_vars = z_vars_fold)
+  test_data2  <- make_data2(test_data,  sgrid1, z_vars = z_vars_fold)
+
+  # Youden's J optimal threshold (from training-fold in-sample predictions)
+  get_youden <- function(prob_tr, truth_tr) {
+    if (length(unique(na.omit(truth_tr))) < 2) return(NA_real_)
+    tryCatch({
+      roc_obj <- roc(truth_tr, prob_tr, quiet = TRUE)
+      as.numeric(unlist(coords(roc_obj, "best", best.method = "youden", ret = "threshold")))[1]
+    }, error = function(e) NA_real_)
+  }
+  sens_spec <- function(p_event, thresh, truth) {
+    pred <- as.integer(p_event > thresh)
+    list(sens = if (any(truth == 1)) mean(pred[truth == 1]) else NA,
+         spec = if (any(truth == 0)) mean(1 - pred[truth == 0]) else NA)
+  }
+
+  # ── 1. Scalar lognormal AFT ───────────────────────────────────────────────
+  scalar_form  <- as.formula(paste("Surv(time_since_use, is_user) ~", paste(z_vars_fold, collapse = " + ")))
+  fit_scalar   <- survreg(scalar_form, data = train_data, dist = "lognormal")
+  sigma_scalar <- fit_scalar$scale
+  eta_scalar   <- predict(fit_scalar, newdata = test_data,  type = "lp")
+  eta_scalar_tr <- predict(fit_scalar, newdata = train_data, type = "lp")
+  S_scalar    <- outer(eta_scalar,    tgrid, function(mu, t) pnorm((log(t) - mu) / sigma_scalar, lower.tail = FALSE))
+  S_scalar_tr <- outer(eta_scalar_tr, tgrid, function(mu, t) pnorm((log(t) - mu) / sigma_scalar, lower.tail = FALSE))
+  p_event_scalar    <- 1 - S_scalar[,    t_idx]
+  p_event_scalar_tr <- 1 - S_scalar_tr[, t_idx]
+  thresh_scalar <- get_youden(p_event_scalar_tr, truth120_train)
+
+  # ── 2. Loglogistic lfAFT ──────────────────────────────────────────────────
+  fit_faft2 <- fit_lfAFT(data = train_data, y = "time_since_use", delta = "is_user",
+                           x = "^pct_chg_", x_as_regex = TRUE, z = z_vars_fold,
+                           family = "loglogistic", k = 20, basis = "cr", s_grid = sgrid1, se = FALSE)
+  S_faft2    <- predict_lfAFT(fit_faft2, test_data,  type = "survival", times = tgrid)
+  S_faft2_tr <- predict_lfAFT(fit_faft2, train_data, type = "survival", times = tgrid)
+  eta_faft2    <- predict_lfAFT(fit_faft2, test_data,  type = "link")
+  eta_faft2_tr <- predict_lfAFT(fit_faft2, train_data, type = "link")
+  p_event_faft2    <- 1 - S_faft2[,    t_idx]
+  p_event_faft2_tr <- 1 - S_faft2_tr[, t_idx]
+  thresh_faft2 <- get_youden(p_event_faft2_tr, truth120_train)
+
+  # ── 3. Lognormal lfAFT ───────────────────────────────────────────────────
+  fit_faft <- fit_lfAFT(data = train_data, y = "time_since_use", delta = "is_user",
+                          x = "^pct_chg_", x_as_regex = TRUE, z = z_vars_fold,
+                          family = "lognormal", k = 20, basis = "cr", s_grid = sgrid1, se = FALSE)
+  S_faft    <- predict_lfAFT(fit_faft, test_data,  type = "survival", times = tgrid)
+  S_faft_tr <- predict_lfAFT(fit_faft, train_data, type = "survival", times = tgrid)
+  eta_faft    <- predict_lfAFT(fit_faft, test_data,  type = "link")
+  eta_faft_tr <- predict_lfAFT(fit_faft, train_data, type = "link")
+  p_event_faft    <- 1 - S_faft[,    t_idx]
+  p_event_faft_tr <- 1 - S_faft_tr[, t_idx]
+  thresh_faft <- get_youden(p_event_faft_tr, truth120_train)
+
+  # ── 4. Lognormal afAFT ────────────────────────────────────────────────────
+  fit_aaft <- fit_afAFT(data = train_data, y = "time_since_use", delta = "is_user",
+                     x = "^pct_chg_", x_as_regex = TRUE, z = z_vars_fold,
+                     family = "lognormal", k = 20, basis = "cr", s_grid = sgrid1)
+  S_aaft    <- predict_afAFT(fit_aaft, test_data,  type = "survival", times = tgrid)
+  S_aaft_tr <- predict_afAFT(fit_aaft, train_data, type = "survival", times = tgrid)
+  p_event_aaft    <- 1 - S_aaft[,    t_idx]
+  p_event_aaft_tr <- 1 - S_aaft_tr[, t_idx]
+  thresh_aaft <- get_youden(p_event_aaft_tr, truth120_train)
+
+  # ── 5. LFCM ───────────────────────────────────────────────────────────────
+  na_mat_test  <- matrix(NA_real_, nrow(test_data),  length(tgrid))
+  na_mat_train <- matrix(NA_real_, nrow(train_data), length(tgrid))
+  lfcm_ok <- tryCatch({
+    fit_lfcm  <- fit_mgcv(data = train_data, family = "LFCM", sgrid = sgrid1, compute_surv = FALSE, z_vars = z_vars_fold)[[1]]
+    S_lfcm    <- cal_stime(fit = fit_lfcm, data = test_data2,  tgrid = tgrid, family = "cox.ph")
+    S_lfcm_tr <- cal_stime(fit = fit_lfcm, data = train_data2, tgrid = tgrid, family = "cox.ph")
+    TRUE
+  }, error = function(e) { message("LFCM fold ", k, " failed: ", e$message); FALSE })
+  if (!lfcm_ok) { fit_lfcm <- NULL; S_lfcm <- na_mat_test; S_lfcm_tr <- na_mat_train }
+  p_event_lfcm    <- 1 - S_lfcm[,    t_idx]
+  p_event_lfcm_tr <- 1 - S_lfcm_tr[, t_idx]
+  thresh_lfcm <- get_youden(p_event_lfcm_tr, truth120_train)
+
+  # ── 6. AFCM ───────────────────────────────────────────────────────────────
+  afcm_ok <- tryCatch({
+    fit_afcm  <- fit_mgcv(data = train_data, family = "AFCM", sgrid = sgrid1, compute_surv = FALSE, z_vars = z_vars_fold)[[1]]
+    S_afcm    <- cal_stime(fit = fit_afcm, data = test_data2,  tgrid = tgrid, family = "cox.ph")
+    S_afcm_tr <- cal_stime(fit = fit_afcm, data = train_data2, tgrid = tgrid, family = "cox.ph")
+    TRUE
+  }, error = function(e) { message("AFCM fold ", k, " failed: ", e$message); FALSE })
+  if (!afcm_ok) { fit_afcm <- NULL; S_afcm <- na_mat_test; S_afcm_tr <- na_mat_train }
+  p_event_afcm    <- 1 - S_afcm[,    t_idx]
+  p_event_afcm_tr <- 1 - S_afcm_tr[, t_idx]
+  thresh_afcm <- get_youden(p_event_afcm_tr, truth120_train)
+
+  # ── 7. Functional logistic (binary at t_eval) ─────────────────────────────
+  fit_logistic     <- pfr(as.formula(paste("is_user_120 ~", paste(z_vars_fold, collapse = " + "), "+ lf(X_mat, argvals = sgrid1)")),
+                          family = binomial(), method = "REML", data = train_data)
+  pred_logistic_tr <- predict(fit_logistic, newdata = train_data, type = "response")
+  pred_logistic    <- predict(fit_logistic, newdata = test_data,  type = "response")
+  thresh_logistic  <- get_youden(pred_logistic_tr, truth120_train)
+
+
+  # ── IPCW Integrated Brier Score ────────────────────────────────────────────────────────────
+  IBS_cv[k, "scalar lognormal AFT"] <- cal_IPCW_IBS(S_scalar,    time_test,  event_test,  time_train, event_train, tgrid)
+  IBS_cv[k, "loglogistic lfAFT"]    <- cal_IPCW_IBS(S_faft2,     time_test,  event_test,  time_train, event_train, tgrid)
+  IBS_cv[k, "lognormal lfAFT"]      <- cal_IPCW_IBS(S_faft,      time_test,  event_test,  time_train, event_train, tgrid)
+  IBS_cv[k, "lognormal afAFT"]      <- cal_IPCW_IBS(S_aaft,      time_test,  event_test,  time_train, event_train, tgrid)
+  IBS_cv[k, "LFCM"]                 <- cal_IPCW_IBS(S_lfcm,      time_test,  event_test,  time_train, event_train, tgrid)
+  IBS_cv[k, "AFCM"]                 <- cal_IPCW_IBS(S_afcm,      time_test,  event_test,  time_train, event_train, tgrid)
+  
+  # IBS_cv[k, "scalar lognormal AFT"] <- cal_Brier(S_scalar,    time_test,  event_test,  tgrid)
+  # IBS_cv[k, "loglogistic lfAFT"]    <- cal_Brier(S_faft2,     time_test,  event_test,  tgrid)
+  # IBS_cv[k, "lognormal lfAFT"]      <- cal_Brier(S_faft,      time_test,  event_test,  tgrid)
+  # IBS_cv[k, "lognormal afAFT"]      <- cal_IPCW_IBS(S_aaft,      time_test,  event_test,  time_train, event_train, tgrid)
+  # IBS_cv[k, "LFCM"]                 <- cal_IPCW_IBS(S_lfcm,      time_test,  event_test,  time_train, event_train, tgrid)
+  # IBS_cv[k, "AFCM"]                 <- cal_IPCW_IBS(S_afcm,      time_test,  event_test,  time_train, event_train, tgrid)
+
+  IBS_tr[k, "scalar lognormal AFT"] <- cal_IPCW_IBS(S_scalar_tr, time_train, event_train, time_train, event_train, tgrid)
+  IBS_tr[k, "loglogistic lfAFT"]    <- cal_IPCW_IBS(S_faft2_tr,  time_train, event_train, time_train, event_train, tgrid)
+  IBS_tr[k, "lognormal lfAFT"]      <- cal_IPCW_IBS(S_faft_tr,   time_train, event_train, time_train, event_train, tgrid)
+  IBS_tr[k, "lognormal afAFT"]      <- cal_IPCW_IBS(S_aaft_tr,   time_train, event_train, time_train, event_train, tgrid)
+  IBS_tr[k, "LFCM"]                 <- cal_IPCW_IBS(S_lfcm_tr,   time_train, event_train, time_train, event_train, tgrid)
+  IBS_tr[k, "AFCM"]                 <- cal_IPCW_IBS(S_afcm_tr,   time_train, event_train, time_train, event_train, tgrid)
+
+  # ── Time-specific IPCW Brier Score at 60 min ──────────────────────────────
+  BS60_cv[k, "scalar lognormal AFT"] <- cal_IPCW_BS_t(S_scalar[,    t_idx60], time_test,  event_test,  time_train, event_train, 60)
+  BS60_cv[k, "loglogistic lfAFT"]    <- cal_IPCW_BS_t(S_faft2[,     t_idx60], time_test,  event_test,  time_train, event_train, 60)
+  BS60_cv[k, "lognormal lfAFT"]      <- cal_IPCW_BS_t(S_faft[,      t_idx60], time_test,  event_test,  time_train, event_train, 60)
+  BS60_cv[k, "lognormal afAFT"]      <- cal_IPCW_BS_t(S_aaft[,      t_idx60], time_test,  event_test,  time_train, event_train, 60)
+  BS60_cv[k, "LFCM"]                 <- cal_IPCW_BS_t(S_lfcm[,      t_idx60], time_test,  event_test,  time_train, event_train, 60)
+  BS60_cv[k, "AFCM"]                 <- cal_IPCW_BS_t(S_afcm[,      t_idx60], time_test,  event_test,  time_train, event_train, 60)
+  BS60_cv[k, "func logistic"]        <- cal_IPCW_BS_t(1 - pred_logistic,      time_test,  event_test,  time_train, event_train, 60)
+
+  BS60_tr[k, "scalar lognormal AFT"] <- cal_IPCW_BS_t(S_scalar_tr[, t_idx60], time_train, event_train, time_train, event_train, 60)
+  BS60_tr[k, "loglogistic lfAFT"]    <- cal_IPCW_BS_t(S_faft2_tr[,  t_idx60], time_train, event_train, time_train, event_train, 60)
+  BS60_tr[k, "lognormal lfAFT"]      <- cal_IPCW_BS_t(S_faft_tr[,   t_idx60], time_train, event_train, time_train, event_train, 60)
+  BS60_tr[k, "lognormal afAFT"]      <- cal_IPCW_BS_t(S_aaft_tr[,   t_idx60], time_train, event_train, time_train, event_train, 60)
+  BS60_tr[k, "LFCM"]                 <- cal_IPCW_BS_t(S_lfcm_tr[,   t_idx60], time_train, event_train, time_train, event_train, 60)
+  BS60_tr[k, "AFCM"]                 <- cal_IPCW_BS_t(S_afcm_tr[,   t_idx60], time_train, event_train, time_train, event_train, 60)
+  BS60_tr[k, "func logistic"]        <- cal_IPCW_BS_t(1 - pred_logistic_tr,   time_train, event_train, time_train, event_train, 60)
+
+  # ── Time-specific IPCW Brier Score at t_eval ──────────────────────────────────────────────────
+  BS120_cv[k, "scalar lognormal AFT"] <- cal_IPCW_BS_t(S_scalar[,    t_idx], time_test,  event_test,  time_train, event_train, t_eval)
+  BS120_cv[k, "loglogistic lfAFT"]    <- cal_IPCW_BS_t(S_faft2[,     t_idx], time_test,  event_test,  time_train, event_train, t_eval)
+  BS120_cv[k, "lognormal lfAFT"]      <- cal_IPCW_BS_t(S_faft[,      t_idx], time_test,  event_test,  time_train, event_train, t_eval)
+  BS120_cv[k, "lognormal afAFT"]      <- cal_IPCW_BS_t(S_aaft[,      t_idx], time_test,  event_test,  time_train, event_train, t_eval)
+  BS120_cv[k, "LFCM"]                 <- cal_IPCW_BS_t(S_lfcm[,      t_idx], time_test,  event_test,  time_train, event_train, t_eval)
+  BS120_cv[k, "AFCM"]                 <- cal_IPCW_BS_t(S_afcm[,      t_idx], time_test,  event_test,  time_train, event_train, t_eval)
+  BS120_cv[k, "func logistic"]        <- cal_IPCW_BS_t(1 - pred_logistic,    time_test,  event_test,  time_train, event_train, t_eval)
+
+  BS120_tr[k, "scalar lognormal AFT"] <- cal_IPCW_BS_t(S_scalar_tr[, t_idx], time_train, event_train, time_train, event_train, t_eval)
+  BS120_tr[k, "loglogistic lfAFT"]    <- cal_IPCW_BS_t(S_faft2_tr[,  t_idx], time_train, event_train, time_train, event_train, t_eval)
+  BS120_tr[k, "lognormal lfAFT"]      <- cal_IPCW_BS_t(S_faft_tr[,   t_idx], time_train, event_train, time_train, event_train, t_eval)
+  BS120_tr[k, "lognormal afAFT"]      <- cal_IPCW_BS_t(S_aaft_tr[,   t_idx], time_train, event_train, time_train, event_train, t_eval)
+  BS120_tr[k, "LFCM"]                 <- cal_IPCW_BS_t(S_lfcm_tr[,   t_idx], time_train, event_train, time_train, event_train, t_eval)
+  BS120_tr[k, "AFCM"]                 <- cal_IPCW_BS_t(S_afcm_tr[,   t_idx], time_train, event_train, time_train, event_train, t_eval)
+  BS120_tr[k, "func logistic"]        <- cal_IPCW_BS_t(1 - pred_logistic_tr, time_train, event_train, time_train, event_train, t_eval)
+
+
+  # ── Uno's IPCW C-index ────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Cindex_cv[k, "scalar lognormal AFT"] <- UnoC(Surv_train, Surv_test,  lpnew = -eta_scalar)
+  Cindex_cv[k, "loglogistic lfAFT"]    <- UnoC(Surv_train, Surv_test,  lpnew = -eta_faft2)
+  Cindex_cv[k, "lognormal lfAFT"]      <- UnoC(Surv_train, Surv_test,  lpnew = -eta_faft)
+  Cindex_cv[k, "lognormal afAFT"]      <- UnoC(Surv_train, Surv_test,  lpnew = -predict(fit_aaft, test_data2,  type = "link"))
+  Cindex_cv[k, "LFCM"]                 <- UnoC(Surv_train, Surv_test,  lpnew =  predict(fit_lfcm, test_data2,  type = "link"))
+  Cindex_cv[k, "AFCM"]                 <- UnoC(Surv_train, Surv_test,  lpnew =  predict(fit_afcm, test_data2,  type = "link"))
+  Cindex_cv[k, "func logistic"]        <- UnoC(Surv_train, Surv_test,  lpnew = pred_logistic)
+
+  Cindex_tr[k, "scalar lognormal AFT"] <- UnoC(Surv_train, Surv_train, lpnew = -eta_scalar_tr)
+  Cindex_tr[k, "loglogistic lfAFT"]    <- UnoC(Surv_train, Surv_train, lpnew = -eta_faft2_tr)
+  Cindex_tr[k, "lognormal lfAFT"]      <- UnoC(Surv_train, Surv_train, lpnew = -eta_faft_tr)
+  Cindex_tr[k, "lognormal afAFT"]      <- UnoC(Surv_train, Surv_train, lpnew = -predict(fit_aaft, train_data2, type = "link"))
+  Cindex_tr[k, "LFCM"]                 <- UnoC(Surv_train, Surv_train, lpnew =  predict(fit_lfcm, train_data2, type = "link"))
+  Cindex_tr[k, "AFCM"]                 <- UnoC(Surv_train, Surv_train, lpnew =  predict(fit_afcm, train_data2, type = "link"))
+  Cindex_tr[k, "func logistic"]        <- UnoC(Surv_train, Surv_train, lpnew = pred_logistic_tr)
+
+  # ── Sensitivity / Specificity at t_eval (Youden's threshold) ──────────────────────────────────
+  ss_list <- list(
+    sens_spec(p_event_scalar, thresh_scalar,   truth120),
+    sens_spec(p_event_faft2,  thresh_faft2,    truth120),
+    sens_spec(p_event_faft,   thresh_faft,     truth120),
+    sens_spec(p_event_aaft,   thresh_aaft,     truth120),
+    sens_spec(p_event_lfcm,   thresh_lfcm,     truth120),
+    sens_spec(p_event_afcm,   thresh_afcm,     truth120),
+    sens_spec(pred_logistic,  thresh_logistic, truth120)
+  )
+  Sens_cv[k, ] <- sapply(ss_list, `[[`, "sens")
+  Spec_cv[k, ] <- sapply(ss_list, `[[`, "spec")
+
+  ss_list_tr <- list(
+    sens_spec(p_event_scalar_tr, thresh_scalar,   truth120_train),
+    sens_spec(p_event_faft2_tr,  thresh_faft2,    truth120_train),
+    sens_spec(p_event_faft_tr,   thresh_faft,     truth120_train),
+    sens_spec(p_event_aaft_tr,   thresh_aaft,     truth120_train),
+    sens_spec(p_event_lfcm_tr,   thresh_lfcm,     truth120_train),
+    sens_spec(p_event_afcm_tr,   thresh_afcm,     truth120_train),
+    sens_spec(pred_logistic_tr,  thresh_logistic, truth120_train)
+  )
+  Sens_tr[k, ] <- sapply(ss_list_tr, `[[`, "sens")
+  Spec_tr[k, ] <- sapply(ss_list_tr, `[[`, "spec")
+}
+
+# ── Results summary ─────────────────────────────────────────────────────────────────────────────────────────────────
+cm <- function(x) round(colMeans(x, na.rm = TRUE), 4)
+df_cv1 <- data.frame(
+  Model      = model_names,
+  IBS_CV     = round(c(cm(IBS_cv),    NA), 4),
+  IBS_Train  = round(c(cm(IBS_tr),    NA), 4),
+  BS60_CV    = cm(BS60_cv),
+  BS60_Train = cm(BS60_tr),
+  BS120_CV   = cm(BS120_cv),
+  BS120_Train = cm(BS120_tr),
+  Cindex_CV  = cm(Cindex_cv),
+  Cindex_Train = cm(Cindex_tr),
+  Sens_CV    = cm(Sens_cv),
+  Sens_Train = cm(Sens_tr),
+  Spec_CV    = cm(Spec_cv),
+  Spec_Train = cm(Spec_tr)
+)
+cat("\n=== Assessment 1: 10-Fold CV Results ===\n")
+print(df_cv1)
+```
+
+```{r cross validation 2}
+# ── Cross-validation setup (Assessment 2) ────────────────────────────────────
+keep_cols2 <- c("time_since_use", "is_user", z_vars,
+                grep("^pct_chg_", colnames(df_post2_r), value = TRUE))
+cv_data2 <- df_post2_r[, keep_cols2]
+
+set.seed(916)
+n_folds <- 10
+fold    <- createFolds(cv_data2$time_since_use, k = n_folds, list = FALSE)
+# make_data2, cal_IPCW_IBS, cal_IPCW_BS_t defined in previous chunk
+t_eval  <- 120
+
+
+# Helpers for creating metric matrices (inherited from chunk 1)
+new_mat2      <- function() matrix(NA, n_folds, 7,      dimnames = list(NULL, model_names))
+new_mat2_surv <- function() matrix(NA, n_folds, n_surv, dimnames = list(NULL, model_names[1:6]))
+
+get_youden <- function(prob_tr, truth_tr) {
+  if (length(unique(na.omit(truth_tr))) < 2) return(NA_real_)
+  tryCatch({
+    roc_obj <- roc(truth_tr, prob_tr, quiet = TRUE)
+    as.numeric(unlist(coords(roc_obj, "best", best.method = "youden", ret = "threshold")))[1]
+  }, error = function(e) NA_real_)
+}
+
+IBS_cv2    <- new_mat2_surv(); IBS_tr2    <- new_mat2_surv()
+BS60_cv2   <- new_mat2();      BS60_tr2   <- new_mat2()
+BS120_cv2  <- new_mat2();      BS120_tr2  <- new_mat2()
+Cindex_cv2 <- new_mat2();      Cindex_tr2 <- new_mat2()
+Sens_cv2   <- new_mat2();      Sens_tr2   <- new_mat2()
+Spec_cv2   <- new_mat2();      Spec_tr2   <- new_mat2()
+for (k in 1:n_folds) {
+  cat(sprintf("Assessment 2 — Fold %d / %d\n", k, n_folds))
+
+  train_data <- cv_data2[-which(fold == k), ]
+  test_data  <- cv_data2[ which(fold == k), ]
+
+  train_data$X_mat       <- as.matrix(train_data[, grep("^pct_chg_", colnames(train_data))])
+  test_data$X_mat        <- as.matrix(test_data[,  grep("^pct_chg_", colnames(test_data))])
+  train_data$is_user_120 <- as.integer(train_data$time_since_use <= t_eval)
+  test_data$is_user_120  <- as.integer(test_data$time_since_use  <= t_eval)
+
+  time_train  <- train_data$time_since_use; event_train <- train_data$is_user
+  time_test   <- test_data$time_since_use;  event_test  <- test_data$is_user
+  Surv_train  <- Surv(time_train, event_train)
+  Surv_test   <- Surv(time_test,  event_test)
+  truth120       <- as.integer(time_test  <= t_eval & event_test  == 1)
+  truth120_train <- as.integer(time_train <= t_eval & event_train == 1)
+  t_idx   <- which.min(abs(tgrid - t_eval))
+  t_idx60 <- which.min(abs(tgrid - 60))
+
+  # Drop z_vars with zero/near-zero variance in this training fold
+  z_vars_fold <- z_vars[vapply(z_vars, function(v) {
+    x <- train_data[[v]]; !all(is.na(x)) && var(x, na.rm = TRUE) > 1e-10
+  }, logical(1))]
+  if (length(z_vars_fold) == 0) z_vars_fold <- z_vars[1]
+
+
+  train_data2 <- make_data2(train_data, sgrid2, z_vars = z_vars_fold)
+  test_data2  <- make_data2(test_data,  sgrid2, z_vars = z_vars_fold)
+
+  get_youden <- function(prob_tr, truth_tr) {
+    if (length(unique(na.omit(truth_tr))) < 2) return(NA_real_)
+    tryCatch({
+      roc_obj <- roc(truth_tr, prob_tr, quiet = TRUE)
+      as.numeric(unlist(coords(roc_obj, "best", best.method = "youden", ret = "threshold")))[1]
+    }, error = function(e) NA_real_)
+  }
+  sens_spec <- function(p_event, thresh, truth) {
+    pred <- as.integer(p_event > thresh)
+    list(sens = if (any(truth == 1)) mean(pred[truth == 1]) else NA,
+         spec = if (any(truth == 0)) mean(1 - pred[truth == 0]) else NA)
+  }
+
+  # ── 1. Scalar lognormal AFT ───────────────────────────────────────────────
+  scalar_form   <- as.formula(paste("Surv(time_since_use, is_user) ~", paste(z_vars_fold, collapse = " + ")))
+  fit_scalar    <- survreg(scalar_form, data = train_data, dist = "lognormal")
+  sigma_scalar  <- fit_scalar$scale
+  eta_scalar    <- predict(fit_scalar, newdata = test_data,  type = "lp")
+  eta_scalar_tr <- predict(fit_scalar, newdata = train_data, type = "lp")
+  S_scalar    <- outer(eta_scalar,    tgrid, function(mu, t) pnorm((log(t) - mu) / sigma_scalar, lower.tail = FALSE))
+  S_scalar_tr <- outer(eta_scalar_tr, tgrid, function(mu, t) pnorm((log(t) - mu) / sigma_scalar, lower.tail = FALSE))
+  p_event_scalar    <- 1 - S_scalar[,    t_idx]
+  p_event_scalar_tr <- 1 - S_scalar_tr[, t_idx]
+  thresh_scalar <- get_youden(p_event_scalar_tr, truth120_train)
+
+  # ── 2. Loglogistic lfAFT ─────────────────────────────────────────────────
+  fit_faft2 <- fit_lfAFT(data = train_data, y = "time_since_use", delta = "is_user",
+                           x = "^pct_chg_", x_as_regex = TRUE, z = z_vars_fold,
+                           family = "loglogistic", k = 20, basis = "bs", s_grid = sgrid2, se = FALSE)
+  S_faft2    <- predict_lfAFT(fit_faft2, test_data,  type = "survival", times = tgrid)
+  S_faft2_tr <- predict_lfAFT(fit_faft2, train_data, type = "survival", times = tgrid)
+  eta_faft2    <- predict_lfAFT(fit_faft2, test_data,  type = "link")
+  eta_faft2_tr <- predict_lfAFT(fit_faft2, train_data, type = "link")
+  p_event_faft2    <- 1 - S_faft2[,    t_idx]
+  p_event_faft2_tr <- 1 - S_faft2_tr[, t_idx]
+  thresh_faft2 <- get_youden(p_event_faft2_tr, truth120_train)
+
+  # ── 3. Lognormal lfAFT ───────────────────────────────────────────────────
+  fit_faft <- fit_lfAFT(data = train_data, y = "time_since_use", delta = "is_user",
+                          x = "^pct_chg_", x_as_regex = TRUE, z = z_vars_fold,
+                          family = "lognormal", k = 20, basis = "bs", s_grid = sgrid2, se = FALSE)
+  S_faft    <- predict_lfAFT(fit_faft, test_data,  type = "survival", times = tgrid)
+  S_faft_tr <- predict_lfAFT(fit_faft, train_data, type = "survival", times = tgrid)
+  eta_faft    <- predict_lfAFT(fit_faft, test_data,  type = "link")
+  eta_faft_tr <- predict_lfAFT(fit_faft, train_data, type = "link")
+  p_event_faft    <- 1 - S_faft[,    t_idx]
+  p_event_faft_tr <- 1 - S_faft_tr[, t_idx]
+  thresh_faft <- get_youden(p_event_faft_tr, truth120_train)
+
+  # ── 4. Lognormal afAFT ───────────────────────────────────────────────────
+  fit_aaft <- fit_afAFT(data = train_data, y = "time_since_use", delta = "is_user",
+                     x = "^pct_chg_", x_as_regex = TRUE, z = z_vars_fold,
+                     family = "lognormal", k = 20, basis = "bs", s_grid = sgrid2)
+  S_aaft    <- predict_afAFT(fit_aaft, test_data,  type = "survival", times = tgrid)
+  S_aaft_tr <- predict_afAFT(fit_aaft, train_data, type = "survival", times = tgrid)
+  p_event_aaft    <- 1 - S_aaft[,    t_idx]
+  p_event_aaft_tr <- 1 - S_aaft_tr[, t_idx]
+  thresh_aaft <- get_youden(p_event_aaft_tr, truth120_train)
+
+  # ── 5. LFCM ──────────────────────────────────────────────────────────────
+  na_mat_test  <- matrix(NA_real_, nrow(test_data),  length(tgrid))
+  na_mat_train <- matrix(NA_real_, nrow(train_data), length(tgrid))
+  lfcm_ok <- tryCatch({
+    fit_lfcm  <- fit_mgcv(data = train_data, family = "LFCM", sgrid = sgrid2, visit = "post2", compute_surv = FALSE, z_vars = z_vars_fold)[[1]]
+    S_lfcm    <- cal_stime(fit = fit_lfcm, data = test_data2,  tgrid = tgrid, family = "cox.ph")
+    S_lfcm_tr <- cal_stime(fit = fit_lfcm, data = train_data2, tgrid = tgrid, family = "cox.ph")
+    TRUE
+  }, error = function(e) { message("LFCM fold ", k, " failed: ", e$message); FALSE })
+  if (!lfcm_ok) { fit_lfcm <- NULL; S_lfcm <- na_mat_test; S_lfcm_tr <- na_mat_train }
+  p_event_lfcm    <- 1 - S_lfcm[,    t_idx]
+  p_event_lfcm_tr <- 1 - S_lfcm_tr[, t_idx]
+  thresh_lfcm <- get_youden(p_event_lfcm_tr, truth120_train)
+
+  # ── 6. AFCM ──────────────────────────────────────────────────────────────
+  afcm_ok <- tryCatch({
+    fit_afcm  <- fit_mgcv(data = train_data, family = "AFCM", sgrid = sgrid2, visit = "post2", compute_surv = FALSE, z_vars = z_vars_fold)[[1]]
+    S_afcm    <- cal_stime(fit = fit_afcm, data = test_data2,  tgrid = tgrid, family = "cox.ph")
+    S_afcm_tr <- cal_stime(fit = fit_afcm, data = train_data2, tgrid = tgrid, family = "cox.ph")
+    TRUE
+  }, error = function(e) { message("AFCM fold ", k, " failed: ", e$message); FALSE })
+  if (!afcm_ok) { fit_afcm <- NULL; S_afcm <- na_mat_test; S_afcm_tr <- na_mat_train }
+  p_event_afcm    <- 1 - S_afcm[,    t_idx]
+  p_event_afcm_tr <- 1 - S_afcm_tr[, t_idx]
+  thresh_afcm <- get_youden(p_event_afcm_tr, truth120_train)
+
+  # ── 7. Functional logistic ────────────────────────────────────────────────
+  fit_logistic     <- pfr(as.formula(paste("is_user_120 ~", paste(z_vars_fold, collapse = " + "), "+ lf(X_mat, argvals = sgrid2)")),
+                          family = binomial(), method = "REML", data = train_data)
+  pred_logistic_tr <- predict(fit_logistic, newdata = train_data, type = "response")
+  pred_logistic    <- predict(fit_logistic, newdata = test_data,  type = "response")
+  thresh_logistic  <- get_youden(pred_logistic_tr, truth120_train)
+
+
+  # ── IPCW Integrated Brier Score ────────────────────────────────────────────────────────────
+  IBS_cv2[k, "scalar lognormal AFT"] <- cal_IPCW_IBS(S_scalar,    time_test,  event_test,  time_train, event_train, tgrid)
+  IBS_cv2[k, "loglogistic lfAFT"]    <- cal_IPCW_IBS(S_faft2,     time_test,  event_test,  time_train, event_train, tgrid)
+  IBS_cv2[k, "lognormal lfAFT"]      <- cal_IPCW_IBS(S_faft,      time_test,  event_test,  time_train, event_train, tgrid)
+  IBS_cv2[k, "lognormal afAFT"]      <- cal_IPCW_IBS(S_aaft,      time_test,  event_test,  time_train, event_train, tgrid)
+  IBS_cv2[k, "LFCM"]                 <- cal_IPCW_IBS(S_lfcm,      time_test,  event_test,  time_train, event_train, tgrid)
+  IBS_cv2[k, "AFCM"]                 <- cal_IPCW_IBS(S_afcm,      time_test,  event_test,  time_train, event_train, tgrid)
+
+  IBS_tr2[k, "scalar lognormal AFT"] <- cal_IPCW_IBS(S_scalar_tr, time_train, event_train, time_train, event_train, tgrid)
+  IBS_tr2[k, "loglogistic lfAFT"]    <- cal_IPCW_IBS(S_faft2_tr,  time_train, event_train, time_train, event_train, tgrid)
+  IBS_tr2[k, "lognormal lfAFT"]      <- cal_IPCW_IBS(S_faft_tr,   time_train, event_train, time_train, event_train, tgrid)
+  IBS_tr2[k, "lognormal afAFT"]      <- cal_IPCW_IBS(S_aaft_tr,   time_train, event_train, time_train, event_train, tgrid)
+  IBS_tr2[k, "LFCM"]                 <- cal_IPCW_IBS(S_lfcm_tr,   time_train, event_train, time_train, event_train, tgrid)
+  IBS_tr2[k, "AFCM"]                 <- cal_IPCW_IBS(S_afcm_tr,   time_train, event_train, time_train, event_train, tgrid)
+
+  # ── Time-specific IPCW Brier Score at 60 min ──────────────────────────────
+  BS60_cv2[k, "scalar lognormal AFT"] <- cal_IPCW_BS_t(S_scalar[,    t_idx60], time_test,  event_test,  time_train, event_train, 60)
+  BS60_cv2[k, "loglogistic lfAFT"]    <- cal_IPCW_BS_t(S_faft2[,     t_idx60], time_test,  event_test,  time_train, event_train, 60)
+  BS60_cv2[k, "lognormal lfAFT"]      <- cal_IPCW_BS_t(S_faft[,      t_idx60], time_test,  event_test,  time_train, event_train, 60)
+  BS60_cv2[k, "lognormal afAFT"]      <- cal_IPCW_BS_t(S_aaft[,      t_idx60], time_test,  event_test,  time_train, event_train, 60)
+  BS60_cv2[k, "LFCM"]                 <- cal_IPCW_BS_t(S_lfcm[,      t_idx60], time_test,  event_test,  time_train, event_train, 60)
+  BS60_cv2[k, "AFCM"]                 <- cal_IPCW_BS_t(S_afcm[,      t_idx60], time_test,  event_test,  time_train, event_train, 60)
+  BS60_cv2[k, "func logistic"]        <- cal_IPCW_BS_t(1 - pred_logistic,      time_test,  event_test,  time_train, event_train, 60)
+
+  BS60_tr2[k, "scalar lognormal AFT"] <- cal_IPCW_BS_t(S_scalar_tr[, t_idx60], time_train, event_train, time_train, event_train, 60)
+  BS60_tr2[k, "loglogistic lfAFT"]    <- cal_IPCW_BS_t(S_faft2_tr[,  t_idx60], time_train, event_train, time_train, event_train, 60)
+  BS60_tr2[k, "lognormal lfAFT"]      <- cal_IPCW_BS_t(S_faft_tr[,   t_idx60], time_train, event_train, time_train, event_train, 60)
+  BS60_tr2[k, "lognormal afAFT"]      <- cal_IPCW_BS_t(S_aaft_tr[,   t_idx60], time_train, event_train, time_train, event_train, 60)
+  BS60_tr2[k, "LFCM"]                 <- cal_IPCW_BS_t(S_lfcm_tr[,   t_idx60], time_train, event_train, time_train, event_train, 60)
+  BS60_tr2[k, "AFCM"]                 <- cal_IPCW_BS_t(S_afcm_tr[,   t_idx60], time_train, event_train, time_train, event_train, 60)
+  BS60_tr2[k, "func logistic"]        <- cal_IPCW_BS_t(1 - pred_logistic_tr,   time_train, event_train, time_train, event_train, 60)
+
+  # ── Time-specific IPCW Brier Score at t_eval ──────────────────────────────────────────────────
+  BS120_cv2[k, "scalar lognormal AFT"] <- cal_IPCW_BS_t(S_scalar[,    t_idx], time_test,  event_test,  time_train, event_train, t_eval)
+  BS120_cv2[k, "loglogistic lfAFT"]    <- cal_IPCW_BS_t(S_faft2[,     t_idx], time_test,  event_test,  time_train, event_train, t_eval)
+  BS120_cv2[k, "lognormal lfAFT"]      <- cal_IPCW_BS_t(S_faft[,      t_idx], time_test,  event_test,  time_train, event_train, t_eval)
+  BS120_cv2[k, "lognormal afAFT"]      <- cal_IPCW_BS_t(S_aaft[,      t_idx], time_test,  event_test,  time_train, event_train, t_eval)
+  BS120_cv2[k, "LFCM"]                 <- cal_IPCW_BS_t(S_lfcm[,      t_idx], time_test,  event_test,  time_train, event_train, t_eval)
+  BS120_cv2[k, "AFCM"]                 <- cal_IPCW_BS_t(S_afcm[,      t_idx], time_test,  event_test,  time_train, event_train, t_eval)
+  BS120_cv2[k, "func logistic"]        <- cal_IPCW_BS_t(1 - pred_logistic,    time_test,  event_test,  time_train, event_train, t_eval)
+
+  BS120_tr2[k, "scalar lognormal AFT"] <- cal_IPCW_BS_t(S_scalar_tr[, t_idx], time_train, event_train, time_train, event_train, t_eval)
+  BS120_tr2[k, "loglogistic lfAFT"]    <- cal_IPCW_BS_t(S_faft2_tr[,  t_idx], time_train, event_train, time_train, event_train, t_eval)
+  BS120_tr2[k, "lognormal lfAFT"]      <- cal_IPCW_BS_t(S_faft_tr[,   t_idx], time_train, event_train, time_train, event_train, t_eval)
+  BS120_tr2[k, "lognormal afAFT"]      <- cal_IPCW_BS_t(S_aaft_tr[,   t_idx], time_train, event_train, time_train, event_train, t_eval)
+  BS120_tr2[k, "LFCM"]                 <- cal_IPCW_BS_t(S_lfcm_tr[,   t_idx], time_train, event_train, time_train, event_train, t_eval)
+  BS120_tr2[k, "AFCM"]                 <- cal_IPCW_BS_t(S_afcm_tr[,   t_idx], time_train, event_train, time_train, event_train, t_eval)
+  BS120_tr2[k, "func logistic"]        <- cal_IPCW_BS_t(1 - pred_logistic_tr, time_train, event_train, time_train, event_train, t_eval)
+
+
+  # ── Uno's IPCW C-index ────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Cindex_cv2[k, "scalar lognormal AFT"] <- UnoC(Surv_train, Surv_test,  lpnew = -eta_scalar)
+  Cindex_cv2[k, "loglogistic lfAFT"]    <- UnoC(Surv_train, Surv_test,  lpnew = -eta_faft2)
+  Cindex_cv2[k, "lognormal lfAFT"]      <- UnoC(Surv_train, Surv_test,  lpnew = -eta_faft)
+  Cindex_cv2[k, "lognormal afAFT"]      <- UnoC(Surv_train, Surv_test,  lpnew = -predict(fit_aaft, test_data2,  type = "link"))
+  Cindex_cv2[k, "LFCM"]                 <- UnoC(Surv_train, Surv_test,  lpnew =  predict(fit_lfcm, test_data2,  type = "link"))
+  Cindex_cv2[k, "AFCM"]                 <- UnoC(Surv_train, Surv_test,  lpnew =  predict(fit_afcm, test_data2,  type = "link"))
+  Cindex_cv2[k, "func logistic"]        <- UnoC(Surv_train, Surv_test,  lpnew = pred_logistic)
+
+  Cindex_tr2[k, "scalar lognormal AFT"] <- UnoC(Surv_train, Surv_train, lpnew = -eta_scalar_tr)
+  Cindex_tr2[k, "loglogistic lfAFT"]    <- UnoC(Surv_train, Surv_train, lpnew = -eta_faft2_tr)
+  Cindex_tr2[k, "lognormal lfAFT"]      <- UnoC(Surv_train, Surv_train, lpnew = -eta_faft_tr)
+  Cindex_tr2[k, "lognormal afAFT"]      <- UnoC(Surv_train, Surv_train, lpnew = -predict(fit_aaft, train_data2, type = "link"))
+  Cindex_tr2[k, "LFCM"]                 <- UnoC(Surv_train, Surv_train, lpnew =  predict(fit_lfcm, train_data2, type = "link"))
+  Cindex_tr2[k, "AFCM"]                 <- UnoC(Surv_train, Surv_train, lpnew =  predict(fit_afcm, train_data2, type = "link"))
+  Cindex_tr2[k, "func logistic"]        <- UnoC(Surv_train, Surv_train, lpnew = pred_logistic_tr)
+
+  # ── Sensitivity / Specificity at t_eval (Youden's threshold) ──────────────────────────────────
+  ss_list <- list(
+    sens_spec(p_event_scalar, thresh_scalar,   truth120),
+    sens_spec(p_event_faft2,  thresh_faft2,    truth120),
+    sens_spec(p_event_faft,   thresh_faft,     truth120),
+    sens_spec(p_event_aaft,   thresh_aaft,     truth120),
+    sens_spec(p_event_lfcm,   thresh_lfcm,     truth120),
+    sens_spec(p_event_afcm,   thresh_afcm,     truth120),
+    sens_spec(pred_logistic,  thresh_logistic, truth120)
+  )
+  Sens_cv2[k, ] <- sapply(ss_list, `[[`, "sens")
+  Spec_cv2[k, ] <- sapply(ss_list, `[[`, "spec")
+
+  ss_list_tr <- list(
+    sens_spec(p_event_scalar_tr, thresh_scalar,   truth120_train),
+    sens_spec(p_event_faft2_tr,  thresh_faft2,    truth120_train),
+    sens_spec(p_event_faft_tr,   thresh_faft,     truth120_train),
+    sens_spec(p_event_aaft_tr,   thresh_aaft,     truth120_train),
+    sens_spec(p_event_lfcm_tr,   thresh_lfcm,     truth120_train),
+    sens_spec(p_event_afcm_tr,   thresh_afcm,     truth120_train),
+    sens_spec(pred_logistic_tr,  thresh_logistic, truth120_train)
+  )
+  Sens_tr2[k, ] <- sapply(ss_list_tr, `[[`, "sens")
+  Spec_tr2[k, ] <- sapply(ss_list_tr, `[[`, "spec")
+}
+
+# ── Results summary ─────────────────────────────────────────────────────────────────────────────────────────────────
+cm2 <- function(x) round(colMeans(x, na.rm = TRUE), 4)
+df_cv2 <- data.frame(
+  Model        = model_names,
+  IBS_CV       = round(c(cm2(IBS_cv2),    NA), 4),
+  IBS_Train    = round(c(cm2(IBS_tr2),    NA), 4),
+  BS60_CV      = cm2(BS60_cv2),
+  BS60_Train   = cm2(BS60_tr2),
+  BS120_CV     = cm2(BS120_cv2),
+  BS120_Train  = cm2(BS120_tr2),
+  Cindex_CV    = cm2(Cindex_cv2),
+  Cindex_Train = cm2(Cindex_tr2),
+  Sens_CV      = cm2(Sens_cv2),
+  Sens_Train   = cm2(Sens_tr2),
+  Spec_CV      = cm2(Spec_cv2),
+  Spec_Train   = cm2(Spec_tr2)
+)
+cat("\n=== Assessment 2: 10-Fold CV Results ===\n")
+print(df_cv2)
+
+```
+
 ```{r, CDF}
 ### CDF
-# cdf_faft <- 1 - fit1.faft[[3]]
-cdf_faft2 <- 1 - fit1.faft2[[3]]
-cdf_laft <- 1 - fit1.laft[[3]]
-cdf_aaft <- 1 - fit1.aaft[[3]]
-cdf_lfcm <- 1 - fit1.lfcm[[3]]
-cdf_afcm <- 1 - fit1.afcm[[3]]
+tgrid_cdf2 <- seq(0.1, 120, len = 500)
+cdf_faft2 <- predict_lfAFT(fit1.faft2, rep_user2, type = "survival", times = tgrid_cdf2)
+cdf_faft  <- predict_lfAFT(fit1.faft,  rep_user2, type = "survival", times = tgrid_cdf2)
+cdf_aaft  <- predict_afAFT(fit1.aaft,  rep_user2, type = "survival", times = tgrid_cdf2)
+cdf_lfcm  <- 1 - fit1.lfcm[[3]]
+cdf_afcm  <- 1 - fit1.afcm[[3]]
 
-
-tgrid <- seq(0, 60, len = 500) 
+tgrid <- tgrid_cdf2 
 plot_surv <- data.frame(time = tgrid,
                           # cdf_faft = cdf_faft[i, ],
                           cdf_faft2 = cdf_faft2[1, ],
@@ -777,10 +1791,13 @@ hazard_function <- function(t, lambda, alpha) {
 
 t_values <- seq(0, 125, length.out = 200)
 
-# AFT model
-lp <- predict(fit1.laft[[1]], type = "link")
-lambda_values <- round(1/exp(lp), 4)[1:10]  # Varying lambda values
-b_values <- as.numeric(gsub(".*\\(([^)]+)\\).*", "\\1", fit1.laft[[1]]$family$family))    # Varying b values
+# AFT model (fit1.laft removed; these lines need updating if hazard plots are needed)
+# lp <- predict(fit1.laft[[1]], type = "link")
+# lambda_values <- round(1/exp(lp), 4)[1:10]
+# b_values <- as.numeric(gsub(".*\(([^)]+)\).*", "\1", fit1.laft[[1]]$family$family))
+lp <- predict(fit1.lfcm[[1]], type = "link")
+lambda_values <- round(1/exp(lp), 4)[1:10]  # Varying lambda values (using LFCM LP as placeholder)
+b_values <- c(1)  # placeholder
 data_list <- list()
 # Loop over values of lambda and b to populate data
 for (i in seq_along(lambda_values)) {
@@ -843,416 +1860,3 @@ ggplot(hazard_df) +
        subtitle = "age = 31, bmi = 25.4") +
   theme_minimal()
 ```
-
-```{r, functional logstic regression}
-library(tidyfun)
-df_post1_r$X_mat <- as.matrix(df_post1_r[, grep("^pct_chg_", colnames(df_post1_r))])
-#df_post1_r$is_user_45 <- ifelse(df_post1_r$time_since_use <= 45, 1, 0)
-df_post1_r$is_user_60 <- ifelse(df_post1_r$time_since_use <= 60, 1, 0)
-df_post1_r$is_user_120 <- ifelse(df_post1_r$time_since_use <= 120, 1, 0)
-df_post2_r$X_mat <- as.matrix(df_post2_r[, grep("^pct_chg_", colnames(df_post2_r))])
-df_post2_r$is_user_60 <- ifelse(df_post2_r$time_since_use <= 60, 1, 0)
-df_post2_r$is_user_120 <- ifelse(df_post2_r$time_since_use <= 120, 1, 0)
-
-fit1.logistic = pfr(is_user_60 ~ age_in_years + bmi + lf(X_mat, argvals = sgrid1), 
-                    family = binomial(), method = "REML", data = df_post1_r)
-fit2.logistic = pfr(is_user_120 ~ age_in_years + bmi + lf(X_mat, argvals = sgrid2), 
-                    family = binomial(), method = "REML", data = df_post2_r)
-# fit3.logistic = pfr(is_user_120 ~ age_in_years + bmi + lf(X_mat, argvals = sgrid), 
-#                     family = binomial(), method = "REML", data = df_post1_r)
-# summary(fit1.logistic)
-# summary(fit2.logistic)
-# summary(fit3.logistic)
-
-coef_df = 
-  coef(fit3.logistic) %>% 
-  rename(estimate = value) %>% 
-  mutate(
-    method = "pfr_adj",
-    ub = estimate + 1.96 * se,
-    lb = estimate - 1.96 * se) %>% 
-  tf_nest(.id = method, .arg = X_mat.argvals)
-
-coef_df %>% 
-  ggplot(aes(y = estimate)) + 
-  geom_spaghetti(alpha = 1, linewidth = 1.2) +
-  geom_errorband(aes(ymax = ub, ymin = lb)) +
-  labs(x = "Seconds since light stimulus (s)", 
-       y = expression(beta~"(s)"),
-       title = "Cutoff = 120 min") +
-  theme_minimal()
-
-df_pred <- predict(fit1.logistic, type = "response")
-
-df_plot <- data.frame(time = sgrid,
-                      pupil_means_nonuser = as.numeric(pupil_means_nonuser),
-                      pupil_means_user = as.numeric(pupil_means_user))
-
-ggplot(data = df_plot, mapping = aes(x = time)) +
-  geom_line(aes(y = pupil_means_user, color = "User"), linewidth = 1) +
-  geom_line(aes(y = pupil_means_nonuser, color = "Nonuser"), linewidth = 1) +
-  scale_color_manual(values = c("User" = "red", "Nonuser" = "blue")) +
-  labs(x = "Seconds since light stimulus (s)", 
-       y = expression(X~"(s)"),
-       title = "Average pupil light response curve",
-       color = NULL) +
-  theme_minimal() +
-  theme(legend.position = c(0.9, 0.9))
-```
-
-```{r Brier score}
-### cross-validated Brier score
-# cross validated c-index and Brier's score for each model
-## introduce variables in the cross validation
-set.seed(916) 
-n_folds <- 10 # number of folds
-### variables that store the c-index and Brier's score in each calculation
-Brier_faft <- Brier_faft2 <- Brier_laft <- Brier_aaft <- Brier_lfcm <- Brier_afcm <- Brier_logistic <- rep(0, n_folds)
-### use "createFolds" function from "caret" package to divide real data into n_folds folds
-fold <- createFolds(df_post1_r$time_since_use, k = n_folds, list = FALSE)
-tgrid <- seq(0, 60, len = 500) 
-
-## run cross validation
-for(k in 1:n_folds){
-    ## split train and test data
-    train_data <- df_post1_r[-which(fold == k),]
-    test_data <- df_post1_r[which(fold == k),]
-    
-    train_data$X_mat <- as.matrix(train_data[, grep("^pct_chg_", colnames(train_data))])
-    test_data$X_mat <- as.matrix(test_data[, grep("^pct_chg_", colnames(test_data))])
-    
-    # preprocess the test_data
-    n <- nrow(test_data)
-    nS <- length(sgrid)
-
-    # set up the exposure & response
-    X <- as.matrix(test_data[, grep("^pct_chg_", colnames(test_data))])
-    delta <- test_data$is_user
-    Y <- test_data$time_since_use
-    logY <- cbind(log(Y), log(Y))
-    logY[delta == 0, 2] <- Inf # right censoring
-  
-    # set up data structure for mgcv fitting
-    lvec <- matrix(1 / nS, nS, 1) # quadrature weights for Riemann integration
-    L <- kronecker(matrix(1, n, 1), t(lvec)) # matrix containing quadrature weights for all participants
-    S <- kronecker(matrix(1, n, 1), t(sgrid)) # matrix containing functional domain values
-  
-    # data for modelling
-    test_data2 <- data.frame(Y = Y,
-                      delta = delta,
-                      X = I(X),
-                      L = I(L),
-                      X_L = I(X * L),
-                      S = I(S),
-                      logY = I(logY),
-                      age_in_years = test_data$age_in_years,
-                      bmi = test_data$bmi)
-    
-    ## survival time and status
-    time_test   <- test_data$time_since_use
-    event_test <- test_data$is_user
-    time_train   <- train_data$time_since_use
-    event_train <- train_data$is_user
-    
-    ## fit each model using train data
-    fit_faft <- fit_mgcv(data = train_data, family = "lognormal", sgrid = sgrid)[[1]]
-    fit_faft2 <- fit_mgcv(data = train_data, family = "loglogistic", sgrid = sgrid)[[1]]
-    fit_laft <- fit_mgcv(data = train_data, family = "LAFT", sgrid = sgrid)[[1]]
-    fit_aaft <- fit_mgcv(data = train_data, family = "AAFT", sgrid = sgrid)[[1]]
-    # fit_lfcm <- fit_mgcv(data = train_data, family = "LFCM", sgrid = sgrid)[[1]]
-    # fit_afcm <- fit_mgcv(data = train_data, family = "AFCM", sgrid = sgrid)[[1]]
-    fit_logistic = pfr(is_user_60 ~ age_in_years + bmi + lf(X_mat, argvals = sgrid), 
-                    family = binomial(), method = "REML", data = train_data)
-    
-    ## obtain linear predictors
-    eta_faft <- as.numeric(predict_AFT(fit_faft, test_data2))
-    eta_faft2 <- as.numeric(predict_AFT(fit_faft2, test_data2))
-    eta_laft <- predict(fit_laft, test_data2, type = "link")
-    eta_aaft <- predict(fit_aaft, test_data2, type = "link")
-    # eta_lfcm <- predict(fit_lfcm, test_data2, type = "link")
-    # eta_afcm <- predict(fit_afcm, test_data2, type = "link")
-    eta_logistic <- predict(fit_logistic, newdata = test_data, type = "response")
-    
-    ## calculate the cross-validated c-index
-    # cindex_laft[k] <- cal_c(marker = -eta_laft, Stime = time_test, status = event_test)
-    # cindex_aaft[k] <- cal_c(marker = -eta_aaft, Stime = time_test, status = event_test)
-    # cindex_lfcm[k] <- cal_c(marker = eta_lfcm, Stime = time_test, status = event_test)
-    # cindex_afcm[k] <- cal_c(marker = eta_afcm, Stime = time_test, status = event_test)
-    # cindex_logistic[k] <- cal_c(marker = eta_logistic, Stime = time_test, status = event_test)
-
-    ## calculate the cross-validated brier score
-    scale_faft <- fit_faft$b_hat
-    S_faft <- outer(eta_faft, tgrid, 
-                    function(eta_faft_i, tgrid_j) pnorm((log(tgrid_j) - eta_faft_i) / scale_faft, lower.tail = FALSE))
-    scale_faft2 <- fit_faft2$b_hat
-    S_faft2 <- outer(eta_faft2, tgrid, 
-                    function(eta_faft2_i, tgrid_j) pnorm((log(tgrid_j) - eta_faft2_i) / scale_faft2, lower.tail = FALSE))
-    S_laft <- cal_stime(fit = fit_laft, data = test_data2, tgrid = tgrid, family = 'lognormal')
-    S_aaft <- cal_stime(fit = fit_aaft, data = test_data2, tgrid = tgrid, family = 'lognormal')
-    # S_lfcm <- cal_stime(fit = fit_lfcm, data = test_data2, tgrid = tgrid, family = 'cox.ph')
-    # S_afcm <- cal_stime(fit = fit_afcm, data = test_data2, tgrid = tgrid, family = 'cox.ph')
-    
-    Brier_faft[k] <- cal_Brier(S_faft, Stime = time_test, status = event_test, tgrid = tgrid)
-    Brier_faft2[k] <- cal_Brier(S_faft2, Stime = time_test, status = event_test, tgrid = tgrid)
-    Brier_laft[k] <- cal_Brier(S_laft, Stime = time_test, status = event_test, tgrid = tgrid)
-    Brier_aaft[k] <- cal_Brier(S_aaft, Stime = time_test, status = event_test, tgrid = tgrid)
-    # Brier_lfcm[k] <- cal_Brier(S_lfcm, Stime = time_test, status = event_test, tgrid = tgrid)
-    # Brier_afcm[k] <- cal_Brier(S_afcm, Stime = time_test, status = event_test, tgrid = tgrid)
-    
-    # Brier score for functional logistic regression
-    pred_p <- predict(fit_logistic, newdata = test_data, type = "response")
-    Brier_logistic[k] <- mean((pred_p - test_data$is_user)^2)
-    
-}
-
-df_Brier <- data.frame(Model = c("loglogistic lfAFT", "lognormal lfAFT", "mgcv lfAFT", "mgcv afAFT", "Functional Logistic"),
-                       Brier_score = c(mean(Brier_faft2), mean(Brier_faft), mean(Brier_laft), mean(Brier_aaft), mean(Brier_logistic)))
-print(df_Brier)
-```
-```{r Brier score 2}
-### cross-validated Brier score
-# cross validated c-index and Brier's score for each model
-## introduce variables in the cross validation
-set.seed(916) 
-n_folds <- 10 # number of folds
-### variables that store the c-index and Brier's score in each calculation
-Brier_faft <- Brier_faft2 <- Brier_laft <- Brier_aaft <- Brier_lfcm <- Brier_afcm <- Brier_logistic <- rep(0, n_folds)
-### use "createFolds" function from "caret" package to divide real data into n_folds folds
-fold <- createFolds(df_post2_r$time_since_use, k = n_folds, list = FALSE)
-tgrid <- seq(0, 120, len = 500) 
-
-## run cross validation
-for(k in 1:n_folds){
-    ## split train and test data
-    train_data <- df_post2_r[-which(fold == k),]
-    test_data <- df_post2_r[which(fold == k),]
-    
-    train_data$X_mat <- as.matrix(train_data[, grep("^pct_chg_", colnames(train_data))])
-    test_data$X_mat <- as.matrix(test_data[, grep("^pct_chg_", colnames(test_data))])
-    
-    # preprocess the test_data
-    n <- nrow(test_data)
-    nS <- length(sgrid2)
-
-    # set up the exposure & response
-    X <- as.matrix(test_data[, grep("^pct_chg_", colnames(test_data))])
-    delta <- test_data$is_user
-    Y <- test_data$time_since_use
-    logY <- cbind(log(Y), log(Y))
-    logY[delta == 0, 2] <- Inf # right censoring
-  
-    # set up data structure for mgcv fitting
-    lvec <- matrix(1 / nS, nS, 1) # quadrature weights for Riemann integration
-    L <- kronecker(matrix(1, n, 1), t(lvec)) # matrix containing quadrature weights for all participants
-    S <- kronecker(matrix(1, n, 1), t(sgrid2)) # matrix containing functional domain values
-  
-    # data for modelling
-    test_data2 <- data.frame(Y = Y,
-                      delta = delta,
-                      X = I(X),
-                      L = I(L),
-                      X_L = I(X * L),
-                      S = I(S),
-                      logY = I(logY),
-                      age_in_years = test_data$age_in_years,
-                      bmi = test_data$bmi)
-    
-    ## survival time and status
-    time_test   <- test_data$time_since_use
-    event_test <- test_data$is_user
-    time_train   <- train_data$time_since_use
-    event_train <- train_data$is_user
-    
-    ## fit each model using train data
-    fit_faft <- fit_mgcv(data = train_data, family = "lognormal", sgrid = sgrid2, visit = "post2")[[1]]
-    fit_faft2 <- fit_mgcv(data = train_data, family = "loglogistic", sgrid = sgrid2, visit = "post2")[[1]]
-    fit_laft <- fit_mgcv(data = train_data, family = "LAFT", sgrid = sgrid2, visit = "post2")[[1]]
-    fit_aaft <- fit_mgcv(data = train_data, family = "AAFT", sgrid = sgrid2, visit = "post2")[[1]]
-    # fit_lfcm <- fit_mgcv(data = train_data, family = "LFCM", sgrid = sgrid)[[1]]
-    # fit_afcm <- fit_mgcv(data = train_data, family = "AFCM", sgrid = sgrid)[[1]]
-    fit_logistic = pfr(is_user_120 ~ age_in_years + bmi + lf(X_mat, argvals = sgrid2), 
-                    family = binomial(), method = "REML", data = train_data)
-    
-    ## obtain linear predictors
-    eta_faft <- as.numeric(predict_AFT(fit_faft, test_data2))
-    eta_faft2 <- as.numeric(predict_AFT(fit_faft2, test_data2))
-    eta_laft <- predict(fit_laft, test_data2, type = "link")
-    eta_aaft <- predict(fit_aaft, test_data2, type = "link")
-    # eta_lfcm <- predict(fit_lfcm, test_data2, type = "link")
-    # eta_afcm <- predict(fit_afcm, test_data2, type = "link")
-    eta_logistic <- predict(fit_logistic, newdata = test_data, type = "response")
-    
-    ## calculate the cross-validated c-index
-    # cindex_laft[k] <- cal_c(marker = -eta_laft, Stime = time_test, status = event_test)
-    # cindex_aaft[k] <- cal_c(marker = -eta_aaft, Stime = time_test, status = event_test)
-    # cindex_lfcm[k] <- cal_c(marker = eta_lfcm, Stime = time_test, status = event_test)
-    # cindex_afcm[k] <- cal_c(marker = eta_afcm, Stime = time_test, status = event_test)
-    # cindex_logistic[k] <- cal_c(marker = eta_logistic, Stime = time_test, status = event_test)
-
-    ## calculate the cross-validated brier score
-    scale_faft <- fit_faft$b_hat
-    S_faft <- outer(eta_faft, tgrid, 
-                    function(eta_faft_i, tgrid_j) pnorm((log(tgrid_j) - eta_faft_i) / scale_faft, lower.tail = FALSE))
-    scale_faft2 <- fit_faft2$b_hat
-    S_faft2 <- outer(eta_faft2, tgrid, 
-                    function(eta_faft2_i, tgrid_j) pnorm((log(tgrid_j) - eta_faft2_i) / scale_faft2, lower.tail = FALSE))
-    S_laft <- cal_stime(fit = fit_laft, data = test_data2, tgrid = tgrid, family = 'lognormal')
-    S_aaft <- cal_stime(fit = fit_aaft, data = test_data2, tgrid = tgrid, family = 'lognormal')
-    # S_lfcm <- cal_stime(fit = fit_lfcm, data = test_data2, tgrid = tgrid, family = 'cox.ph')
-    # S_afcm <- cal_stime(fit = fit_afcm, data = test_data2, tgrid = tgrid, family = 'cox.ph')
-    
-    Brier_faft[k] <- cal_Brier(S_faft, Stime = time_test, status = event_test, tgrid = tgrid)
-    Brier_faft2[k] <- cal_Brier(S_faft2, Stime = time_test, status = event_test, tgrid = tgrid)
-    Brier_laft[k] <- cal_Brier(S_laft, Stime = time_test, status = event_test, tgrid = tgrid)
-    Brier_aaft[k] <- cal_Brier(S_aaft, Stime = time_test, status = event_test, tgrid = tgrid)
-    # Brier_lfcm[k] <- cal_Brier(S_lfcm, Stime = time_test, status = event_test, tgrid = tgrid)
-    # Brier_afcm[k] <- cal_Brier(S_afcm, Stime = time_test, status = event_test, tgrid = tgrid)
-    
-    # Brier score for functional logistic regression
-    pred_p <- predict(fit_logistic, newdata = test_data, type = "response")
-    Brier_logistic[k] <- mean((pred_p - test_data$is_user)^2)
-    
-}
-
-df_Brier <- data.frame(Model = c("loglogistic lfAFT", "lognormal lfAFT", "mgcv lfAFT", "mgcv afAFT", "Functional Logistic"),
-                       Brier_score = c(mean(Brier_faft2), mean(Brier_faft), mean(Brier_laft), mean(Brier_aaft), mean(Brier_logistic)))
-print(df_Brier)
-```
-
-```{r, sensitivity and specificity}
-library(pROC)
-tgrid <- seq(0, 120, len = 121) 
-threshold <- 0.6868
-
-surv.laft <- cal_stime(fit = fit1.laft[[1]], data = fit1.laft[[4]], tgrid = tgrid, family = 'lognormal')
-surv.lfcm <- cal_stime(fit = fit1.lfcm[[1]], data = fit1.lfcm[[4]], tgrid = tgrid, family = 'cox.ph')
-surv.aaft <- cal_stime(fit = fit1.aaft[[1]], data = fit1.aaft[[4]], tgrid = tgrid, family = 'lognormal')
-surv.afcm <- cal_stime(fit = fit1.afcm[[1]], data = fit1.afcm[[4]], tgrid = tgrid, family = 'cox.ph')
-
-surv45 <- df_post1_r$time_since_use > 45
-surv45.laft <- surv.laft[, 46] > threshold
-surv45.lfcm <- surv.lfcm[, 46] > threshold
-surv45.aaft <- surv.aaft[, 46] > threshold
-surv45.afcm <- surv.afcm[, 46] > threshold
-surv45.logistic <- predict(fit1.logistic, newdata = df_post1_r, type = "response") < threshold
-
-surv120 <- df_post1_r$time_since_use > 120
-surv120.laft <- surv.laft[, 121] > threshold
-surv120.lfcm <- surv.lfcm[, 121] > threshold
-surv120.aaft <- surv.aaft[, 121] > threshold
-surv120.afcm <- surv.afcm[, 121] > threshold
-surv120.logistic <- predict(fit3.logistic, newdata = df_post1_r, type = "response") < threshold
-
-# cutoff = 45 min
-df_surv45 <- data.frame(model = rep(c("Linear AFT", "Additive AFT", "LFCM", "AFCM", "Functional Logistic"), each = 123),
-                      truth = rep(surv45, times = 5),
-                      estimate = c(surv45.laft, surv45.aaft, surv45.lfcm, surv45.afcm, surv45.logistic))
-
-df_se45 <- df_surv45 %>%
-  group_by(model) %>%
-  summarise(se = round(sum(estimate & truth) / sum(truth), 4))
-
-df_sp45 <- df_surv45 %>%
-  group_by(model) %>%
-  summarise(sp = round(sum(!truth & !estimate) / sum(!truth), 4))
-
-# cutoff = 120 min
-df_surv120 <- data.frame(model = rep(c("Linear AFT", "Additive AFT", "LFCM", "AFCM", "Functional Logistic"), each = 123),
-                      truth = rep(surv120, times = 5),
-                      estimate = c(surv120.laft, surv120.aaft, surv120.lfcm,surv120.afcm, surv120.logistic))
-
-df_se120 <- df_surv120 %>%
-  group_by(model) %>%
-  summarise(se = round(sum(estimate & truth) / sum(truth), 4))
-
-df_sp120 <- df_surv120 %>%
-  group_by(model) %>%
-  summarise(sp = round(sum(!truth & !estimate) / sum(!truth), 4))
-
-# AUC
-roc.laft <- roc(surv45, surv.laft[, 46])
-roc.aaft <- roc(surv45, surv.aaft[, 46])
-roc.lfcm <- roc(surv45, surv.lfcm[, 46])
-roc.afcm <- roc(surv45, surv.afcm[, 46])
-roc.logistic <- roc(surv45, 1 - predict(fit1.logistic, newdata = df_post1_r, type = "response"))
-
-df_auc45 <- data.frame(model = c("Linear AFT", "Additive AFT", "LFCM", "AFCM", "Functional Logistic"),
-                       AUC = round(c(auc(roc.laft), auc(roc.aaft), auc(roc.lfcm), auc(roc.afcm), auc(roc.logistic)), 4))
-
-roc.laft <- roc(surv120, surv.laft[, 121])
-roc.aaft <- roc(surv120, surv.aaft[, 121])
-roc.lfcm <- roc(surv120, surv.lfcm[, 121])
-roc.afcm <- roc(surv120, surv.afcm[, 121])
-roc.logistic <- roc(surv120, 1 - predict(fit3.logistic, newdata = df_post1_r, type = "response"))
-
-df_auc120 <- data.frame(model = c("Linear AFT", "Additive AFT", "LFCM", "AFCM", "Functional Logistic"),
-                       AUC = round(c(auc(roc.laft), auc(roc.aaft), auc(roc.lfcm), auc(roc.afcm), auc(roc.logistic)), 4))
-
-# Brier score
-# Predicted survival probabilities at t = 45
-prob.laft <- surv.laft[, 46]
-prob.aaft <- surv.aaft[, 46]
-prob.lfcm <- surv.lfcm[, 46]
-prob.afcm <- surv.afcm[, 46]
-prob.logistic <- 1 - predict(fit1.logistic, newdata = df_post1_r, type = "response")
-
-df_brier45 <- data.frame(model = c("Linear AFT", "Additive AFT", "LFCM", "AFCM", "Functional Logistic"),
-                         brier = round(c(mean((prob.laft - surv45)^2), 
-                                         mean((prob.aaft - surv45)^2),
-                                         mean((prob.lfcm - surv45)^2),
-                                         mean((prob.afcm - surv45)^2),
-                                         mean((prob.logistic - surv45)^2)), 4))
-
-# Predicted survival probabilities at t = 120
-prob.laft <- surv.laft[, 121]
-prob.aaft <- surv.aaft[, 121]
-prob.lfcm <- surv.lfcm[, 121]
-prob.afcm <- surv.afcm[, 121]
-prob.logistic <- 1 - predict(fit3.logistic, newdata = df_post1_r, type = "response")
-
-df_brier120 <- data.frame(model = c("Linear AFT", "Additive AFT", "LFCM", "AFCM", "Functional Logistic"),
-                         brier = round(c(mean((prob.laft - surv120)^2), 
-                                         mean((prob.aaft - surv120)^2),
-                                         mean((prob.lfcm - surv120)^2),
-                                         mean((prob.afcm - surv120)^2),
-                                         mean((prob.logistic - surv120)^2)), 4))
-```
-
-```{r}
-truth <- as.numeric(surv45)
-
-# Predicted survival probabilities at 45 minutes
-prob.laft <- surv.laft[, 46]
-prob.aaft <- surv.aaft[, 46]
-prob.lfcm <- surv.lfcm[, 46]
-prob.afcm <- surv.afcm[, 46]
-prob.logistic <- 1 - predict(fit1.logistic, newdata = df_post1_r, type = "response")
-
-# Function to compute Youden's J optimal cutoff
-get_best_cutoff <- function(true, prob) {
-  roc_obj <- roc(true, prob)
-  coords(roc_obj, "best", best.method = "youden", 
-         ret = c("threshold", "sensitivity", "specificity", "youden"))
-}
-
-# Apply to each model
-best.laft <- get_best_cutoff(truth, prob.laft)
-best.aaft <- get_best_cutoff(truth, prob.aaft)
-best.lfcm <- get_best_cutoff(truth, prob.lfcm)
-best.afcm <- get_best_cutoff(truth, prob.afcm)
-best.logistic <- get_best_cutoff(truth, prob.logistic)
-
-# Combine results
-youden_df <- data.frame(
-  model = c("Linear AFT", "Additive AFT", "LFCM", "AFCM", "Functional Logistic"),
-  threshold = round(c(best.laft$threshold, best.aaft$threshold, best.lfcm$threshold,
-                      best.afcm$threshold, best.logistic$threshold), 4),
-  sensitivity = round(c(best.laft$sensitivity, best.aaft$sensitivity, best.lfcm$sensitivity,
-                        best.afcm$sensitivity, best.logistic$sensitivity), 4),
-  specificity = round(c(best.laft$specificity, best.aaft$specificity, best.lfcm$specificity,
-                        best.afcm$specificity, best.logistic$specificity), 4),
-  youden = round(c(best.laft$youden, best.aaft$youden, best.lfcm$youden,
-                   best.afcm$youden, best.logistic$youden), 4)
-)
-```
-
