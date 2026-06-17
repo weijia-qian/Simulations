@@ -6,7 +6,7 @@
 #SBATCH --error=main_simulation.err
 
 module purge
-module load R
+module load R/4.4.0
 
 # Rscript to run an r script
 # This stores which job is running (1, 2, 3, etc)

@@ -13,6 +13,7 @@ suppressPackageStartupMessages(library(scam))
 suppressPackageStartupMessages(library(splines))
 suppressPackageStartupMessages(library(survival))
 suppressPackageStartupMessages(library(refund))
+suppressPackageStartupMessages(library(survAUC))
 suppressPackageStartupMessages(library(tictoc))
 suppressPackageStartupMessages(library(tidyverse))
 
@@ -144,18 +145,23 @@ for (iter in 1:N_iter) {
   eta_laft2 <- predict_AFT(fit.laft2, sim_data_test$data)
   eta_lfcm <- rowSums(predict(fit.lfcm, sim_data_test$data, type = "terms"))
   
-  ## calculate c-index
-  # AUC_aaft <- cal_c(marker = -eta_aaft, Stime = time_test, status = event_test)
-  # AUC_afcm <- cal_c(marker = eta_afcm, Stime = time_test, status = event_test)
-  # AUC_laft <- cal_c(marker = -eta_laft, Stime = time_test, status = event_test)
-  # AUC_lfcm <- cal_c(marker = eta_lfcm, Stime = time_test, status = event_test)
-  
+  ## Surv objects for UnoC (Uno's IPCW C-index, consistent with real_data_analysis.Rmd)
+  Surv_train <- Surv(time_train, event_train)
+  Surv_test  <- Surv(time_test,  event_test)
+
+  ## calculate C-index (Uno's IPCW; sign-flip so higher lpnew = higher risk)
+  # Note: eta_laft2 is overwritten below as as.numeric(); compute C-index first.
+  Cindex_aaft  <- UnoC(Surv_train, Surv_test, lpnew = -eta_aaft)
+  Cindex_afcm  <- UnoC(Surv_train, Surv_test, lpnew =  eta_afcm)
+  Cindex_laft  <- UnoC(Surv_train, Surv_test, lpnew = -eta_laft)
+  Cindex_laft2 <- UnoC(Surv_train, Surv_test, lpnew = -eta_laft2)
+  Cindex_lfcm  <- UnoC(Surv_train, Surv_test, lpnew =  eta_lfcm)
+
   # set the time grid to evaluate survival function
   tmax <- 2000 # consistent with 'tmax' in simulate_Cox2()
-  # tgrid <- seq(0, tmax, len = 1000) 
   nS_pred <- 500
-  tgrid <- seq(0, tmax, len = nS_pred)
-  
+  tgrid <- seq(0.1, tmax, len = nS_pred)  # start at 0.1 to avoid log(0) in AFT survival
+
   # estimated survival function
   S_aaft_test <- cal_stime(fit = fit.aaft, data = sim_data_test$data, tgrid = tgrid, family = 'lognormal')
   df_pred <- sim_data_test$data[rep(1:n, each = nS_pred), ]
@@ -163,18 +169,18 @@ for (iter in 1:N_iter) {
   S_afcm_test <- matrix(predict(fit.afcm, newdata = df_pred, type = "response"), nrow = n, ncol = nS_pred, byrow = TRUE)
   S_laft_test <- cal_stime(fit = fit.laft, data = sim_data_test$data, tgrid = tgrid, family = 'lognormal')
   S_lfcm_test <- matrix(predict(fit.lfcm, newdata = df_pred, type = "response"), nrow = n, ncol = nS_pred, byrow = TRUE)
-  
+
   eta_laft2 <- as.numeric(eta_laft2)
   scale_laft2 <- fit.laft2$b_hat
-  S_laft2_test <- outer(eta_laft2, tgrid, 
+  S_laft2_test <- outer(eta_laft2, tgrid,
                         function(eta_laft2_i, tgrid_j) pnorm((log(tgrid_j) - eta_laft2_i) / scale_laft2, lower.tail = FALSE))
-  
-  ## calculate brier score
-  Brier_aaft <- cal_Brier(S_aaft_test, Stime = time_test, status = event_test, tgrid = tgrid)
-  Brier_afcm <- cal_Brier(S_afcm_test, Stime = time_test, status = event_test, tgrid = tgrid)
-  Brier_laft <- cal_Brier(S_laft_test, Stime = time_test, status = event_test, tgrid = tgrid)
-  Brier_laft2 <- cal_Brier(S_laft2_test, Stime = time_test, status = event_test, tgrid = tgrid)
-  Brier_lfcm <- cal_Brier(S_lfcm_test, Stime = time_test, status = event_test, tgrid = tgrid)
+
+  ## calculate IPCW integrated Brier score (consistent with real_data_analysis.Rmd)
+  Brier_aaft  <- cal_IPCW_IBS(S_aaft_test,  time_test, event_test, time_train, event_train, tgrid)
+  Brier_afcm  <- cal_IPCW_IBS(S_afcm_test,  time_test, event_test, time_train, event_train, tgrid)
+  Brier_laft  <- cal_IPCW_IBS(S_laft_test,  time_test, event_test, time_train, event_train, tgrid)
+  Brier_laft2 <- cal_IPCW_IBS(S_laft2_test, time_test, event_test, time_train, event_train, tgrid)
+  Brier_lfcm  <- cal_IPCW_IBS(S_lfcm_test,  time_test, event_test, time_train, event_train, tgrid)
   
   ###############################################################
   ## pointwise squared errors of coefficient surface
@@ -244,6 +250,13 @@ for (iter in 1:N_iter) {
                         beta_type = beta_type,
                         b = b,
                         censor_rate = 1 - mean(sim_data$data$delta),
+                        # C-index (Uno's IPCW, out-of-sample)
+                        Cindex_aaft,
+                        Cindex_afcm,
+                        Cindex_laft,
+                        Cindex_laft2,
+                        Cindex_lfcm,
+                        # IPCW integrated Brier score (out-of-sample)
                         Brier_aaft,
                         Brier_afcm,
                         Brier_laft,
