@@ -43,7 +43,10 @@ my_colors <- c(
   "afAFT" = "#B481BB"
 )
 
-folder_path <- "/Users/weijia/Research/FDA/Simulations/Output/20251022_additive"
+folder_path <- "/Users/weijia/Research/FDA/Simulations/Output/20260617_additive"
+fig_dir <- "/Users/weijia/Research/FDA/Biometrics revision"
+
+# folder_path <- "/Users/weijia/Research/FDA/Simulations/Output/20251022_additive"
 # folder_path <- "/Users/weijia/Research/FDA/Simulations/Output/20250821_additive"
 rda_files <- list.files(path = folder_path, pattern = "\\.RDA$", full.names = TRUE)
 all_results <- list()
@@ -114,6 +117,43 @@ plot_additive_Brier <- table_Brier %>%
     # strip.background = element_blank()
   )
 ```
+
+### Average Out-of-Sample C-Index Across Iterations
+```{r}
+table_Cindex <- all_info %>%
+  #filter(family != "loglogistic") %>%
+  pivot_longer(cols = c("Cindex_aaft", "Cindex_afcm", "Cindex_laft2", "Cindex_lfcm"),
+               names_to = "type",
+               values_to = "value") %>%
+  mutate(est_model = case_when(str_detect(type, "aaft") ~ "afAFT",
+                               str_detect(type, "afcm") ~ "AFCM",
+                               str_detect(type, "laft2") ~ "lfAFT",
+                               str_detect(type, "lfcm") ~ "LFCM"),
+         est_model = factor(est_model, 
+                            levels = c("afAFT", "AFCM", "lfAFT", "LFCM")),
+         family = recode(family, "cox.ph" = "CoxPH"),
+         log_value = log(value))
+
+plot_additive_Cindex <- table_Cindex %>%
+  ggplot(aes(factor(nS), value, fill = est_model)) + 
+  geom_boxplot(outliers = FALSE, fatten = 1.3) +
+  scale_fill_manual(values = my_colors) +
+  facet_grid(family~n, labeller = labeller(n = label_both, family = label_value), scales = "free") +
+  labs(x = "", y = "out-of-sample C-index", fill = "Model"
+       ) +
+  theme(
+    axis.title.x=element_blank(),
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    strip.text.y = element_blank(),  
+    strip.background.y = element_blank()
+    # strip.text = element_blank(), 
+    # strip.background = element_blank()
+  )
+
+ggsave(file.path(fig_dir, "fig_sim_additive_cindex.jpeg"), plot_additive_Cindex, width = 8, height = 4, dpi = 500)
+```
+
 ### Computation Time
 ```{r}
 table_time <- all_info %>%
@@ -188,9 +228,7 @@ plot_additive_surv <- table_surv %>%
 plot_additive <- plot_additive_Brier + plot_additive_surv +
   plot_layout(guides = 'collect', axes = "collect")
 
-fig_dir <- "/Users/weijia/Research/FDA/Drafts"
 ggsave(file.path(fig_dir, "fig_sim_additive.jpeg"), plot_additive, width = 8, height = 4, dpi = 500)
-
 ```
 
 

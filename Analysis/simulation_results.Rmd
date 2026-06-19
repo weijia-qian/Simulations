@@ -97,6 +97,46 @@ ggsave(file.path(fig_dir, "fig_sim_brier.jpeg"), plot_linear_Brier, width = 6, h
 
 ```
 
+### Average Out-of-Sample C-Index
+```{r}
+all_info <- data.frame()
+# Loop through all scenarios and iterations to extract 'info'
+for (scenario in all_results) {
+  # print(scenario[[1]]$info$scenario)
+  for (iteration in scenario) {
+    all_info <- rbind(all_info, iteration$info)
+  }
+}
+
+# box plot
+table_Brier <- all_info %>%
+  pivot_longer(cols = c("Brier_faft", "Brier_cox", "Brier_faft2"),
+               names_to = "type",
+               values_to = "value") %>%
+  mutate(est_model = case_when(
+            str_detect(type, "cox") ~ "LFCM",
+            str_detect(type, "fttm") ~ "FTTM",
+            # str_detect(type, "norm") ~ "mgcv lfAFT",
+            str_detect(type, "faft2") ~ "loglogistic lfAFT",
+            .default = "lognormal lfAFT"),
+         est_model = factor(est_model, 
+                            levels = c("lognormal lfAFT", "loglogistic lfAFT", "LFCM", "FTTM")),
+         family = recode(family, "cox.ph" = "CoxPH"),
+         log_value = log(value))
+
+plot_linear_Brier <- table_Brier %>%
+  filter(beta_type == "simple") %>%
+  ggplot(aes(factor(nS), value, fill = est_model)) + 
+  geom_boxplot(outliers = FALSE, fatten = 1.3) +
+  scale_fill_manual(values = my_colors) +
+  facet_grid(family~n, labeller = labeller(n = label_both, family = label_value), scales = "free") +
+  labs(x = "Density of grid (p)", y = "Out-of-sample Brier score", fill = "Model"
+       )
+
+ggsave(file.path(fig_dir, "fig_sim_brier.jpeg"), plot_linear_Brier, width = 6, height = 4, dpi = 500)
+
+```
+
 ### MISE for Estimated Coefficient Functions Across Iterations
 ```{r}
 all_coef <- data.frame() 

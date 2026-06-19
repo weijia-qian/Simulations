@@ -1,4 +1,4 @@
-simulate_AFT = function(data = dat_func, 
+simulate_AFT = function(data = dat_func,
                         family = "lognormal",
                         n = 500,
                         npc = 5,
@@ -7,18 +7,16 @@ simulate_AFT = function(data = dat_func,
                         beta_type = "simple",
                         beta_0 = 0.5,
                         b = 0.1,
-                        u = 250,
+                        censor_rate = 0.25,
                         seed = NULL,
                         output = "wide"){
-  
+
   if (beta_type == "simple") {
     k = 6
     bs_coef = c(0, -1, -0.5, 0.25, 0.25, 0.25)
-    u = 250
   } else  if (beta_type == "complex") {
     k = 8
     bs_coef = c(0, -0.6, -1.2, 0.6, -0.5, 1, 0.5, 0)
-    u = 35
     #bs_coef = c(0, 0.4, 0.2, 0.2, 0.2, 0.6, 0.3, 0)
     #bs_coef = c(-1, 0.5, -0.7, -0.4, 0.8, -0.5, 0.9, -0.6)
   }
@@ -83,8 +81,9 @@ simulate_AFT = function(data = dat_func,
   # obtain true survival times (T)
   lp <- rep(beta_0, n) + num_int
   t <- exp(lp + b * z)
-  
-  # simulate censoring times from uniform (0, u)
+
+  # choose upper bound of Uniform censoring to achieve target censoring rate
+  u <- choose_ub_unif(t, censor_rate)
   C <- runif(n, 0, u)
   
   # obtain observed survival times (Y)

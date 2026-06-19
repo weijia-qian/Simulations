@@ -51,6 +51,22 @@ cal_stime <- function(fit, data, tgrid = seq(0, 10, len = 1000), family = "cox.p
   return(S_i)
 }
 
+### function "choose_ub_unif()" finds the upper bound of Uniform(0, ub) censoring
+# that achieves a target censoring rate.
+# P(censored) = P(C < T) where C ~ Uniform(0, ub).
+# For a given set of true event times T_true, solves for ub such that
+#   mean(pmin(T_true, ub) / ub) = censor_rate
+# using the identity P(C < T) = E[pmin(T, ub) / ub].
+choose_ub_unif <- function(T_true, censor_rate, tol = 1e-8) {
+  stopifnot(censor_rate > 0, censor_rate < 1)
+  g <- function(ub) mean(pmin(T_true, ub) / ub) - censor_rate
+  lo <- max(tol, min(T_true[T_true > 0], na.rm = TRUE) * 1e-6)
+  hi <- max(T_true, na.rm = TRUE) * 2 + 1
+  if (g(lo) < 0) lo <- tol
+  while (g(hi) > 0) hi <- hi * 2
+  uniroot(g, lower = lo, upper = hi)$root
+}
+
 ### function "cal_IPCW_IBS()" calculates IPCW integrated Brier score
 # Evaluates at observed event times in the test set.
 # Integration: trapezoidal rule for first interval, right Riemann sum thereafter,
