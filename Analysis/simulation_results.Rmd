@@ -46,9 +46,10 @@ my_colors <- c(
   "loglogistic lfAFT" = "#7AD151",
   "lognormal lfAFT" = "#FDE725"
 )
-fig_dir <- "/Users/weijia/Research/FDA/Drafts"
+fig_dir <- "/Users/weijia/Research/FDA/Biometrics revision"
 
-folder_path <- "/Users/weijia/Research/FDA/Simulations/Output/20251020"
+folder_path <- "/Users/weijia/Research/FDA/Simulations/Output/20260619"
+# folder_path <- "/Users/weijia/Research/FDA/Simulations/Output/20251020"
 # folder_path <- "/Users/weijia/Research/FDA/Simulations/Output/20250819"
 rda_files <- list.files(path = folder_path, pattern = "\\.RDA$", full.names = TRUE)
 all_results <- list()
@@ -99,18 +100,9 @@ ggsave(file.path(fig_dir, "fig_sim_brier.jpeg"), plot_linear_Brier, width = 6, h
 
 ### Average Out-of-Sample C-Index
 ```{r}
-all_info <- data.frame()
-# Loop through all scenarios and iterations to extract 'info'
-for (scenario in all_results) {
-  # print(scenario[[1]]$info$scenario)
-  for (iteration in scenario) {
-    all_info <- rbind(all_info, iteration$info)
-  }
-}
-
 # box plot
-table_Brier <- all_info %>%
-  pivot_longer(cols = c("Brier_faft", "Brier_cox", "Brier_faft2"),
+table_Cindex <- all_info %>%
+  pivot_longer(cols = c("Cindex_faft", "Cindex_cox", "Cindex_faft2"),
                names_to = "type",
                values_to = "value") %>%
   mutate(est_model = case_when(
@@ -124,16 +116,16 @@ table_Brier <- all_info %>%
          family = recode(family, "cox.ph" = "CoxPH"),
          log_value = log(value))
 
-plot_linear_Brier <- table_Brier %>%
+plot_linear_Cindex <- table_Cindex %>%
   filter(beta_type == "simple") %>%
   ggplot(aes(factor(nS), value, fill = est_model)) + 
   geom_boxplot(outliers = FALSE, fatten = 1.3) +
   scale_fill_manual(values = my_colors) +
   facet_grid(family~n, labeller = labeller(n = label_both, family = label_value), scales = "free") +
-  labs(x = "Density of grid (p)", y = "Out-of-sample Brier score", fill = "Model"
+  labs(x = "Density of grid (p)", y = "Out-of-sample C-Index", fill = "Model"
        )
 
-ggsave(file.path(fig_dir, "fig_sim_brier.jpeg"), plot_linear_Brier, width = 6, height = 4, dpi = 500)
+ggsave(file.path(fig_dir, "fig_sim_Cindex.jpeg"), plot_linear_Cindex, width = 6, height = 4, dpi = 500)
 
 ```
 

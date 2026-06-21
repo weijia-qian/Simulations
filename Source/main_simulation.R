@@ -46,7 +46,6 @@ n = c(100, 200, 500)
 nS = c(50, 100, 500)
 beta_type = c('simple')
 b = c(0.5)
-seed_start = 1000
 N_iter = 500
 
 params = expand.grid(family = family,
@@ -75,17 +74,23 @@ b = params$b[scenario]
 ###############################################################
 results = vector("list", length = N_iter)
 
-# simulate a test dataset
+# Pre-draw per-iteration seeds (reproducible given the R session seed at this point)
+seeds <- sample.int(1e8, N_iter)
+
+# simulate a fixed test dataset — seed derived from scenario for reproducibility
+# across runs without depending on seed_start
 if(family %in% c("lognormal", "loglogistic")){
-  sim_data_test <- simulate_AFT(family = family, n = n, nS = nS, beta_type = beta_type, b = b, seed = seed_start)
+  sim_data_test <- simulate_AFT(family = family, n = n, nS = nS, beta_type = beta_type, b = b,
+                                seed = scenario * 1000L + 99L)
 }else{
-  sim_data_test <- simulate_Cox(n = n, nS = nS, beta_type = beta_type, seed = seed_start)
+  sim_data_test <- simulate_Cox(n = n, nS = nS, beta_type = beta_type,
+                                seed = scenario * 1000L + 99L)
 }
 
 for(iter in 1:N_iter){
   print(iter)
-  # set seed
-  seed.iter = (seed_start - 1) * N_iter + iter
+  # set seed for this iteration
+  seed.iter <- seeds[[iter]]
 
   # simulate data
   if(family %in% c("lognormal", "loglogistic")){
@@ -165,12 +170,19 @@ for(iter in 1:N_iter){
   Surv_train <- Surv(time_train, event_train)
   Surv_test  <- Surv(time_test,  event_test)
 
-  ## calculate C-index (Uno's IPCW; sign-flip so higher lpnew = higher risk)
+  ## calculate Uno's IPCW C-index (sign-flip so higher lpnew = higher risk)
   Cindex_norm  <- UnoC(Surv_train, Surv_test, lpnew = -eta_norm)
   Cindex_cox   <- UnoC(Surv_train, Surv_test, lpnew =  eta_cox)
   Cindex_faft  <- UnoC(Surv_train, Surv_test, lpnew = -eta_faft)
   Cindex_faft2 <- UnoC(Surv_train, Surv_test, lpnew = -eta_faft2)
   # Cindex_fttm <- UnoC(Surv_train, Surv_test, lpnew = -eta_fttm)
+
+  ## calculate Harrell's C-index (no IPCW; sign-flip so higher marker = higher risk)
+  Harrell_norm  <- cal_c(marker = -eta_norm,  Stime = time_test, status = event_test)
+  Harrell_cox   <- cal_c(marker =  eta_cox,   Stime = time_test, status = event_test)
+  Harrell_faft  <- cal_c(marker = -eta_faft,  Stime = time_test, status = event_test)
+  Harrell_faft2 <- cal_c(marker = -eta_faft2, Stime = time_test, status = event_test)
+  # Harrell_fttm <- cal_c(marker = -eta_fttm, Stime = time_test, status = event_test)
 
   ## calculate the IPCW Brier score (consistent with real_data_analysis.Rmd)
   tmax <- 120
@@ -306,11 +318,16 @@ for(iter in 1:N_iter){
                         beta_type = beta_type,
                         b = b,
                         censor_rate = 1 - mean(sim_data$data$delta),
-                        # C-index (Harrell's concordance, out-of-sample)
+                        # Uno's IPCW C-index (out-of-sample)
                         Cindex_norm,
                         Cindex_cox,
                         Cindex_faft,
                         Cindex_faft2,
+                        # Harrell's C-index (out-of-sample, no IPCW correction)
+                        Harrell_norm,
+                        Harrell_cox,
+                        Harrell_faft,
+                        Harrell_faft2,
                         # IPCW integrated Brier score (out-of-sample)
                         Brier_norm,
                         Brier_cox,
