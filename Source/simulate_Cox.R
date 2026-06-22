@@ -76,7 +76,14 @@ simulate_Cox = function(data = dat_func,
   df_sim$X_L = I(df_sim$X * df_sim$L)
   if (beta_type == "simple"){
     beta <- function(s) 0.3 - (s - 0.2)^2
-    eta_i <- sim_curves %*% beta(sgrid) * (range_s / nS)
+    beta_vec <- beta(sgrid)
+    eta_i <- sim_curves %*% beta_vec * (range_s / nS)
+
+    # Normalize eta_i so LP variance is constant across nS.
+    # Theoretical LP variance: (range_s/nS)^2 * sum_k lambda_k * (Phi_k^T beta_vec)^2
+    v_proj <- as.numeric(t(Phi[, 1:npc]) %*% beta_vec)
+    lp_var  <- (range_s / nS)^2 * sum(eigenvalues[1:npc] * v_proj^2)
+    if (lp_var > 0) eta_i <- eta_i / sqrt(lp_var)
   } else {
     #beta <- function(s) -0.3 + cos(10 * s)
     eta_i <- predict(fit, newdata = df_sim, type = "terms")

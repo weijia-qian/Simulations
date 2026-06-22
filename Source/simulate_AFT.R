@@ -62,8 +62,17 @@ simulate_AFT = function(data = dat_func,
   
   # obtain beta_1
   beta_1 <- B %*% bs_coef
-  # numeric integral over the grid
+  # numeric integral over the grid (Riemann sum approximation)
   num_int <- sim_curves %*% beta_1 * (tmax / nS)
+
+  # Normalize num_int so that the theoretical LP variance is constant across nS.
+  # Without this, (tmax/nS)^2 * Var(X %*% beta_1) changes with nS due to
+  # Riemann-sum approximation error in beta_1, causing nS-dependent signal strength.
+  # Theoretical LP variance: (tmax/nS)^2 * sum_k lambda_k * (Phi_k^T beta_1)^2
+  v_proj <- as.numeric(t(Phi[, 1:npc]) %*% beta_1)          # npc projections of beta_1
+  lp_var  <- (tmax / nS)^2 * sum(eigenvalues[1:npc] * v_proj^2)
+  # target SD = 1.0 (fixed signal strength regardless of nS)
+  if (lp_var > 0) num_int <- num_int / sqrt(lp_var)
   
   # simulate z_i from logistic(0,1)
   if (family == "loglogistic"){

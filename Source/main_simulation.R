@@ -46,7 +46,7 @@ n = c(100, 200, 500)
 nS = c(50, 100, 500)
 beta_type = c('simple')
 b = c(0.5)
-N_iter = 500
+N_iter = 300
 
 params = expand.grid(family = family,
                      n = n,
@@ -56,7 +56,7 @@ params = expand.grid(family = family,
 
 ## define number of simulations and parameter scenarios
 if(doLocal) {
-  scenario = 3
+  scenario = 23
   N_iter = 2
 }else{
   # defined from batch script params
@@ -187,7 +187,7 @@ for(iter in 1:N_iter){
   ## calculate the IPCW Brier score (consistent with real_data_analysis.Rmd)
   tmax <- 120
   nS_pred <- 500
-  tgrid <- seq(0.1, tmax, len = nS_pred)  # start at 0.1 to avoid log(0) in AFT survival
+  tgrid <- seq(0.01, tmax, len = nS_pred)  # start at 0.1 to avoid log(0) in AFT survival
   
   S_norm <- cal_stime(fit = fit.norm, data = sim_data_test$data, tgrid = tgrid, family = 'lognormal')
   # S_cox <- cal_stime(fit = fit.cox, data = sim_data_test$data, tgrid = tgrid, family = 'cox.ph')

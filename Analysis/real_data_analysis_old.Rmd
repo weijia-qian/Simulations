@@ -86,7 +86,7 @@ df_post2_r <- df_wide[df_wide$mtm == "2_Post2" & df_wide$eye == "Right", ]
 # summary(df_post2_r$time_since_use)
 
 # time grid
-sgrid1 <- unique(df$time)[-120] # remove the last frame
+sgrid <- sgrid1 <- unique(df$time)[-120] # remove the last frame
 sgrid2 <- unique(df$time)
 # mean(df_post1_r$pct_chg_119)
 #plot(df_post1_r$pct_chg_120, xlab= "Subject")
@@ -910,8 +910,7 @@ n_folds <- 10 # number of folds
 Brier_faft <- Brier_faft2 <- Brier_laft <- Brier_aaft <- Brier_lfcm <- Brier_afcm <- Brier_logistic <- rep(0, n_folds)
 ### use "createFolds" function from "caret" package to divide real data into n_folds folds
 fold <- createFolds(df_post1_r$time_since_use, k = n_folds, list = FALSE)
-tgrid <- seq(0, 120, len = 500)
-sgrid <- sgrid1
+tgrid <- seq(0, 60, len = 500) 
 
 ## run cross validation
 for(k in 1:n_folds){
@@ -1010,6 +1009,7 @@ df_Brier <- data.frame(Model = c("loglogistic lfAFT", "lognormal lfAFT", "mgcv l
                        Brier_score = c(mean(Brier_faft2), mean(Brier_faft), mean(Brier_laft), mean(Brier_aaft), mean(Brier_logistic)))
 print(df_Brier)
 ```
+
 ```{r Brier score 2}
 ### cross-validated Brier score
 # cross validated c-index and Brier's score for each model
